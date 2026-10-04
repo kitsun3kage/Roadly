@@ -24,15 +24,10 @@ interface Options {
 }
 
 interface Result {
-  /** Ref z najświeższą wartością — używaj w pętlach rAF bez re-renderów. */
   headingRef: MutableRefObject<number | null>;
-  /** Aktualny offset (do UI). */
   offset: number;
-  /** Traktuj aktualny kierunek patrzenia jako północ. */
   calibrate: () => void;
-  /** Reset kalibracji. */
   reset: () => void;
-  /** Ręczne ustawienie offsetu. */
   setOffset: (v: number) => void;
 }
 
@@ -49,14 +44,12 @@ export function useDeviceHeading(opts: Options): Result {
   const headingRef = useRef<number | null>(null);
   const rawRef = useRef<number | null>(null);
   const smoothedRef = useRef<number | null>(null);
-  const lastEmitRef = useRef(0);
   const screenAngleRef = useRef(0);
 
   const offsetRef = useRef(offset);
   const manualOverrideRef = useRef(false);
   const calibSamplesRef = useRef<{ ts: number; delta: number }[]>([]);
 
-  // Persist offset
   useEffect(() => {
     offsetRef.current = offset;
     try {
@@ -66,7 +59,6 @@ export function useDeviceHeading(opts: Options): Result {
     }
   }, [offset]);
 
-  // Screen orientation
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const on = () => {
@@ -77,7 +69,6 @@ export function useDeviceHeading(opts: Options): Result {
     return () => window.removeEventListener('orientationchange', on);
   }, []);
 
-  // Device orientation listener
   useEffect(() => {
     if (!opts.enabled) {
       headingRef.current = null;
@@ -112,9 +103,6 @@ export function useDeviceHeading(opts: Options): Result {
       const next = prev == null ? corrected : prev + bearingDelta(prev, corrected) * ALPHA;
       smoothedRef.current = next;
       headingRef.current = next;
-
-      const now = performance.now();
-      lastEmitRef.current = now;
     };
 
     const attach = () => {
@@ -144,15 +132,14 @@ export function useDeviceHeading(opts: Options): Result {
 
     return () => {
       cancelled = true;
-      const h = handler;
-      window.removeEventListener('deviceorientationabsolute', h as EventListener);
-      window.removeEventListener('deviceorientation', h as EventListener);
+      window.removeEventListener('deviceorientationabsolute', handler as EventListener);
+      window.removeEventListener('deviceorientation', handler as EventListener);
       headingRef.current = null;
       smoothedRef.current = null;
     };
   }, [opts.enabled]);
 
-  // ─── Auto-kalibracja z GPS ────────────────────────────────────────
+  // Auto-kalibracja z GPS
   useEffect(() => {
     if (!opts.enabled) return;
     if (manualOverrideRef.current) return;
@@ -165,7 +152,6 @@ export function useDeviceHeading(opts: Options): Result {
     const samples = calibSamplesRef.current;
     samples.push({ ts: now, delta });
 
-    // Utrzymuj ostatnie 15 s
     while (samples.length > 0 && now - samples[0].ts > 15000) samples.shift();
 
     if (samples.length >= 6 && now - samples[0].ts >= 5000) {
@@ -174,7 +160,6 @@ export function useDeviceHeading(opts: Options): Result {
         samples.reduce((s, x) => s + (x.delta - mean) ** 2, 0) / samples.length;
       const stdDev = Math.sqrt(variance);
 
-      // Stabilna różnica — dostosuj offset
       if (stdDev < 25 && Math.abs(mean) > 12) {
         const newOffset = offsetRef.current + mean;
         const normalized = ((((newOffset + 180) % 360) + 360) % 360) - 180;
@@ -182,7 +167,7 @@ export function useDeviceHeading(opts: Options): Result {
         calibSamplesRef.current = [];
       }
     }
-  }, [opts.enabled, opts.moving, opts.gpsHeading, opts.gpsSpeed]);
+  }, [opts.enabled, opts.gpsHeading, opts.gpsSpeed]);
 
   const calibrate = useCallback(() => {
     if (rawRef.current == null) return;
