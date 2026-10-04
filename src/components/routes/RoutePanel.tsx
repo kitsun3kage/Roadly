@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -46,7 +47,7 @@ const PROFILES: { id: TravelProfile; label: string }[] = [
   { id: 'walking', label: 'Pieszo' }
 ];
 
-export default function RoutePanel(props: Props) {
+function RoutePanelInner(props: Props) {
   const {
     fromPlace,
     toPlace,
@@ -80,10 +81,7 @@ export default function RoutePanel(props: Props) {
         <h2 className="panel__title">Trasa</h2>
       </div>
 
-      <div
-        className="panel__section"
-        style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-      >
+      <div className="panel__section" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div className="field">
           <span className="field__dot field__dot--from" aria-hidden />
           <input
@@ -327,3 +325,5 @@ export default function RoutePanel(props: Props) {
     </div>
   );
 }
+
+export default memo(RoutePanelInner);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import {
   getCurrentLocation,
   getGeolocationPermission,
@@ -10,23 +10,10 @@ import {
 } from '../services/location';
 import type { Coordinates } from '../types';
 
-/**
- * Bearing między dwoma punktami (0–360°, 0 = północ, zgodnie z ruchem wskazówek zegara).
- * Używany gdy `coords.heading` jest niedostępne (np. przy małej prędkości).
- */
-export function bearingBetween(a: Coordinates, b: Coordinates): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const toDeg = (r: number) => (r * 180) / Math.PI;
-  const dLon = toRad(b.lng - a.lng);
-  const y = Math.sin(dLon) * Math.cos(toRad(b.lat));
-  const x =
-    Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) -
-    Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(dLon);
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
+const MIN_MOVE_M = 2;
+const MIN_INTERVAL_MS = 900;
 
-/** Odległość w metrach (przybliżenie dla małych dystansów). */
-function distanceMeters(a: Coordinates, b: Coordinates): number {
+function distanceM(a: Coordinates, b: Coordinates): number {
   const R = 6371000;
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
@@ -37,7 +24,23 @@ function distanceMeters(a: Coordinates, b: Coordinates): number {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-export function useGeolocation() {
+export interface GeolocationHook {
+  position: LocationResult | null;
+  positionRef: MutableRefObject<LocationResult | null>;
+  heading: number | null;
+  error: string | null;
+  loading: boolean;
+  watching: boolean;
+  permission: GeolocationPermission;
+  supported: boolean;
+  secure: boolean;
+  request: () => Promise<LocationResult | null>;
+  ensurePosition: () => Promise<LocationResult | null>;
+  startWatch: () => void;
+  stopWatch: () => void;
+}
+
+export function useGeolocation(): GeolocationHook {
   const [position, setPosition] = useState<LocationResult | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,16 +51,13 @@ export function useGeolocation() {
   const stopRef = useRef<(() => void) | null>(null);
   const positionRef = useRef<LocationResult | null>(null);
   const permissionRef = useRef<GeolocationPermission>('unknown');
-
-  useEffect(() => {
-    positionRef.current = position;
-  }, [position]);
+  const lastEmitTsRef = useRef(0);
 
   useEffect(() => {
     permissionRef.current = permission;
   }, [permission]);
 
-  // ─── Sprawdzenie uprawnień + nasłuch zmian ─────────────────────────
+  // ─── Uprawnienia ─────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
@@ -91,27 +91,39 @@ export function useGeolocation() {
     };
   }, []);
 
-  // ─── Przetwarzanie pozycji → heading ───────────────────────────────
+  // ─── Przetwarzanie pozycji: throttling + stabilizacja ───────────
   const handlePosition = useCallback((loc: LocationResult) => {
     const prev = positionRef.current;
+    const now = performance.now();
+
+    // 1) Stabilizacja po dystansie — ignoruj mikro-drgania GPS
+    if (prev) {
+      const moved = distanceM(prev.coordinates, loc.coordinates);
+      const dHeading = loc.heading != null && prev.heading != null
+        ? Math.abs(loc.heading - prev.heading)
+        : 999;
+      // Jeśli prawie stoimy i heading się nie zmienił, pomijamy
+      if (moved < MIN_MOVE_M && dHeading < 5 && Math.abs(loc.accuracy - prev.accuracy) < 5) {
+        return;
+      }
+    }
+
+    // 2) Throttling czasowy — nie częściej niż ~1 Hz
+    if (now - lastEmitTsRef.current < MIN_INTERVAL_MS) {
+      return;
+    }
+    lastEmitTsRef.current = now;
+
+    // 3) Zapis w ref (dla konsumentów którzy nie chcą re-renderów)
     positionRef.current = loc;
+
+    // 4) setState tylko gdy naprawdę trzeba
     setPosition(loc);
     setError(null);
 
-    // 1) Preferuj heading z Geolocation API (wiarygodny gdy speed > ~1 m/s)
+    // Heading z GPS — preferuj z Geolocation API
     if (loc.heading != null && loc.speed != null && loc.speed > 0.5) {
       setHeading(loc.heading);
-      return;
-    }
-
-    // 2) Fallback: oblicz bearing z dwóch ostatnich pozycji, jeśli przesunął się wystarczająco
-    if (prev) {
-      const dist = distanceMeters(prev.coordinates, loc.coordinates);
-      // Ignoruj mikro-drgania (< 3 m) i stare punkty (> 30 s)
-      const dt = (loc.timestamp - prev.timestamp) / 1000;
-      if (dist > 3 && dist < 500 && dt > 0 && dt < 30) {
-        setHeading(bearingBetween(prev.coordinates, loc.coordinates));
-      }
     }
   }, []);
 
@@ -215,6 +227,7 @@ export function useGeolocation() {
 
   return {
     position,
+    positionRef,
     heading,
     error,
     loading,

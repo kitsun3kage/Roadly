@@ -1,17 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { bearingDelta } from '../lib/geo';
 
-/**
- * Zwraca kąt obrotu ekranu (0, 90, 180, 270).
- * W landscape orientacja ekranu jest obrócona względem "góry telefonu",
- * dlatego trzeba ją skompensować w kompasie.
- */
+const OFFSET_KEY = 'roadly.compassOffset.v1';
+
 function getScreenAngle(): number {
   if (typeof window === 'undefined') return 0;
   const s = window.screen as Screen & { orientation?: { angle?: number } };
   const angle = s.orientation?.angle;
   if (typeof angle === 'number' && !Number.isNaN(angle)) return angle;
-  // Fallback dla starszych przeglądarek
   const w = window as unknown as { orientation?: number };
   if (typeof w.orientation === 'number' && !Number.isNaN(w.orientation)) {
     return w.orientation;
@@ -19,53 +15,81 @@ function getScreenAngle(): number {
   return 0;
 }
 
-/**
- * Kompas urządzenia (0 = północ) lub null.
- *
- * - iOS Safari: `webkitCompassHeading` (dokładny).
- * - Android Chrome: `alpha` (0–360°, przeciwnie do wskazówek zegara) → przeliczamy.
- *
- * Do wartości dodajemy:
- *  1. Kąt orientacji ekranu (portrait / landscape / reverse).
- *  2. Kalibrację użytkownika (`offsetDeg`) — do korekty "odwróconej" wskazówki.
- *
- * Wartości są wygładzane wykładniczo (filtr EMA) i emitowane ~30 Hz
- * (wystarczy dla płynności, nie zabija CPU).
- */
-export function useDeviceHeading(enabled: boolean, offsetDeg = 0) {
-  const [heading, setHeading] = useState<number | null>(null);
-  const listenerRef = useRef<((e: DeviceOrientationEvent) => void) | null>(null);
+interface Options {
+  enabled: boolean;
+  /** Heading z GPS (0-360) gdy user się porusza, w przeciwnym razie null. */
+  gpsHeading?: number | null;
+  /** Prędkość GPS (m/s). */
+  gpsSpeed?: number | null;
+}
+
+interface Result {
+  /** Ref z najświeższą wartością — używaj w pętlach rAF bez re-renderów. */
+  headingRef: MutableRefObject<number | null>;
+  /** Aktualny offset (do UI). */
+  offset: number;
+  /** Traktuj aktualny kierunek patrzenia jako północ. */
+  calibrate: () => void;
+  /** Reset kalibracji. */
+  reset: () => void;
+  /** Ręczne ustawienie offsetu. */
+  setOffset: (v: number) => void;
+}
+
+export function useDeviceHeading(opts: Options): Result {
+  const [offset, setOffsetState] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem(OFFSET_KEY);
+      return v ? Number(v) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const headingRef = useRef<number | null>(null);
+  const rawRef = useRef<number | null>(null);
   const smoothedRef = useRef<number | null>(null);
   const lastEmitRef = useRef(0);
   const screenAngleRef = useRef(0);
-  const offsetRef = useRef(offsetDeg);
 
-  // Aktualizuj offset bez restartu listenerów
-  useEffect(() => {
-    offsetRef.current = offsetDeg;
-  }, [offsetDeg]);
+  const offsetRef = useRef(offset);
+  const manualOverrideRef = useRef(false);
+  const calibSamplesRef = useRef<{ ts: number; delta: number }[]>([]);
 
+  // Persist offset
   useEffect(() => {
-    if (!enabled) {
-      setHeading(null);
+    offsetRef.current = offset;
+    try {
+      localStorage.setItem(OFFSET_KEY, String(Math.round(offset)));
+    } catch {
+      /* ignore */
+    }
+  }, [offset]);
+
+  // Screen orientation
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const on = () => {
+      screenAngleRef.current = getScreenAngle();
+    };
+    on();
+    window.addEventListener('orientationchange', on);
+    return () => window.removeEventListener('orientationchange', on);
+  }, []);
+
+  // Device orientation listener
+  useEffect(() => {
+    if (!opts.enabled) {
+      headingRef.current = null;
       smoothedRef.current = null;
       return;
     }
     if (typeof window === 'undefined') return;
 
     let cancelled = false;
-    screenAngleRef.current = getScreenAngle();
-
-    const onScreenOrientation = () => {
-      screenAngleRef.current = getScreenAngle();
-    };
-    window.addEventListener('orientationchange', onScreenOrientation);
 
     const handler = (e: DeviceOrientationEvent) => {
-      const anyE = e as DeviceOrientationEvent & {
-        webkitCompassHeading?: number;
-        webkitCompassAccuracy?: number;
-      };
+      const anyE = e as DeviceOrientationEvent & { webkitCompassHeading?: number };
 
       let base: number | null = null;
       if (
@@ -78,25 +102,20 @@ export function useDeviceHeading(enabled: boolean, offsetDeg = 0) {
       }
       if (base == null) return;
 
-      // Kompensacja orientacji ekranu + kalibracja użytkownika
-      const corrected =
-        (((base + screenAngleRef.current + offsetRef.current) % 360) + 360) % 360;
+      const correctedRaw = (((base + screenAngleRef.current) % 360) + 360) % 360;
+      rawRef.current = correctedRaw;
 
-      // Filtr EMA — wygładzenie
+      const corrected = (((correctedRaw + offsetRef.current) % 360) + 360) % 360;
+
       const prev = smoothedRef.current;
-      const ALPHA = 0.22;
-      const next =
-        prev == null ? corrected : prev + bearingDelta(prev, corrected) * ALPHA;
+      const ALPHA = 0.3;
+      const next = prev == null ? corrected : prev + bearingDelta(prev, corrected) * ALPHA;
       smoothedRef.current = next;
+      headingRef.current = next;
 
-      // Throttle emisji do ~30 Hz
       const now = performance.now();
-      if (now - lastEmitRef.current < 33) return;
       lastEmitRef.current = now;
-      setHeading(next);
     };
-
-    listenerRef.current = handler;
 
     const attach = () => {
       window.addEventListener('deviceorientationabsolute', handler as EventListener);
@@ -125,16 +144,65 @@ export function useDeviceHeading(enabled: boolean, offsetDeg = 0) {
 
     return () => {
       cancelled = true;
-      window.removeEventListener('orientationchange', onScreenOrientation);
-      const h = listenerRef.current;
-      if (h) {
-        window.removeEventListener('deviceorientationabsolute', h as EventListener);
-        window.removeEventListener('deviceorientation', h as EventListener);
-      }
-      listenerRef.current = null;
+      const h = handler;
+      window.removeEventListener('deviceorientationabsolute', h as EventListener);
+      window.removeEventListener('deviceorientation', h as EventListener);
+      headingRef.current = null;
       smoothedRef.current = null;
     };
-  }, [enabled]);
+  }, [opts.enabled]);
 
-  return heading;
+  // ─── Auto-kalibracja z GPS ────────────────────────────────────────
+  useEffect(() => {
+    if (!opts.enabled) return;
+    if (manualOverrideRef.current) return;
+    if (opts.gpsHeading == null) return;
+    if (opts.gpsSpeed == null || opts.gpsSpeed < 1.5) return;
+    if (rawRef.current == null) return;
+
+    const delta = bearingDelta(rawRef.current, opts.gpsHeading);
+    const now = Date.now();
+    const samples = calibSamplesRef.current;
+    samples.push({ ts: now, delta });
+
+    // Utrzymuj ostatnie 15 s
+    while (samples.length > 0 && now - samples[0].ts > 15000) samples.shift();
+
+    if (samples.length >= 6 && now - samples[0].ts >= 5000) {
+      const mean = samples.reduce((s, x) => s + x.delta, 0) / samples.length;
+      const variance =
+        samples.reduce((s, x) => s + (x.delta - mean) ** 2, 0) / samples.length;
+      const stdDev = Math.sqrt(variance);
+
+      // Stabilna różnica — dostosuj offset
+      if (stdDev < 25 && Math.abs(mean) > 12) {
+        const newOffset = offsetRef.current + mean;
+        const normalized = ((((newOffset + 180) % 360) + 360) % 360) - 180;
+        setOffsetState(Math.round(normalized));
+        calibSamplesRef.current = [];
+      }
+    }
+  }, [opts.enabled, opts.moving, opts.gpsHeading, opts.gpsSpeed]);
+
+  const calibrate = useCallback(() => {
+    if (rawRef.current == null) return;
+    const target = ((((rawRef.current + 180) % 360) + 360) % 360) - 180;
+    setOffsetState(-Math.round(target));
+    manualOverrideRef.current = true;
+    calibSamplesRef.current = [];
+  }, []);
+
+  const reset = useCallback(() => {
+    setOffsetState(0);
+    manualOverrideRef.current = false;
+    calibSamplesRef.current = [];
+  }, []);
+
+  const setOffset = useCallback((v: number) => {
+    setOffsetState(v);
+    manualOverrideRef.current = true;
+    calibSamplesRef.current = [];
+  }, []);
+
+  return { headingRef, offset, calibrate, reset, setOffset };
 }

@@ -1,5 +1,13 @@
-import { Compass, Download, Info, Palette, RotateCcw, Trash2, Upload } from 'lucide-react';
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
+import {
+  Compass,
+  Download,
+  Info,
+  Palette,
+  RotateCcw,
+  Trash2,
+  Upload
+} from 'lucide-react';
 import { MAP_STYLES } from '../../services/maps';
 import { isSupabaseEnabled } from '../../lib/supabase';
 
@@ -17,7 +25,7 @@ interface Props {
   onCompassOffsetChange: (offset: number) => void;
 }
 
-export default function SettingsPanel(props: Props) {
+function SettingsPanelInner(props: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
@@ -61,12 +69,15 @@ export default function SettingsPanel(props: Props) {
 
       {/* Kalibracja kompasu */}
       <div className="panel__section">
-        <div className="panel__section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div
+          className="panel__section-title"
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
           <Compass size={14} /> Kalibracja kompasu
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 10px' }}>
-          Trzymaj telefon skierowany <strong>na północ</strong> i kliknij „Skalibruj". Strzałka
-          zacznie wskazywać właściwy kierunek.
+          Trzymaj telefon skierowany <strong>na północ</strong> i kliknij „Skalibruj".
+          Strzałka zacznie wskazywać właściwy kierunek.
         </p>
         <div className="btn-row" style={{ marginBottom: 8 }}>
           <button className="btn btn--primary" onClick={props.onCompassCalibrate}>
@@ -137,17 +148,20 @@ export default function SettingsPanel(props: Props) {
       <div className="panel__section">
         <div className="panel__section-title">O aplikacji</div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
-          Roadly korzysta z danych OpenStreetMap, geokodowania Nominatim oraz routingu OSRM.
+          Roadly korzysta z danych OpenStreetMap, geokodowania Nominatim oraz routingu
+          OSRM.
         </p>
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 8 }}>
           Synchronizacja w chmurze: {isSupabaseEnabled ? 'skonfigurowana' : 'niedostępna'}.
         </p>
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 8 }}>
-          <Info size={12} style={{ verticalAlign: -2 }} /> Nawigacja opiera się na geometrii trasy
-          i aktualnej pozycji GPS. Aplikacja nie dostarcza danych o ruchu drogowym ani
-          informacji o fotoradarach.
+          <Info size={12} style={{ verticalAlign: -2 }} /> Nawigacja opiera się na
+          geometrii trasy i aktualnej pozycji GPS. Aplikacja nie dostarcza danych o
+          ruchu drogowym ani informacji o fotoradarach.
         </p>
       </div>
     </div>
   );
 }
+
+export default memo(SettingsPanelInner);

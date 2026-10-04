@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { FolderPlus, Navigation, Pencil, Star, Trash2 } from 'lucide-react';
 import type { Collection, Place, SavedPlace } from '../../types';
 
@@ -14,7 +14,7 @@ interface Props {
   onShowToast: (msg: string, kind?: 'info' | 'error') => void;
 }
 
-export default function CollectionsPanel(props: Props) {
+function CollectionsPanelInner(props: Props) {
   const {
     collections,
     savedPlaces,
@@ -163,3 +163,5 @@ export default function CollectionsPanel(props: Props) {
     </div>
   );
 }
+
+export default memo(CollectionsPanelInner);

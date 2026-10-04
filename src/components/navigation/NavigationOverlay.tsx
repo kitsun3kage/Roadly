@@ -1,5 +1,13 @@
-import { useMemo } from 'react';
-import { AlertTriangle, CheckCircle2, Locate, Navigation as NavIcon, Volume2, VolumeX, X } from 'lucide-react';
+import { memo, useMemo } from 'react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Locate,
+  Navigation as NavIcon,
+  Volume2,
+  VolumeX,
+  X
+} from 'lucide-react';
 import type { Coordinates, Route, RouteStep } from '../../types';
 import { formatDistance, formatDuration, formatETA } from '../../lib/utils';
 import {
@@ -46,6 +54,7 @@ function computeNavState(route: Route, user: Coordinates | null): NavState {
   }
 
   const userProj = closestSegment(user, route.geometry);
+
   let step: RouteStep | null = null;
   let stepIndex = route.steps.length - 1;
   let bestDist = Infinity;
@@ -68,9 +77,16 @@ function computeNavState(route: Route, user: Coordinates | null): NavState {
   }
 
   const remainingM = remainingDistanceAlongRoute(user, route.geometry);
-  const remainingS = route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
+  const remainingS =
+    route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
 
-  return { step, stepIndex, distanceToManeuver: bestDist, remainingM, remainingS };
+  return {
+    step,
+    stepIndex,
+    distanceToManeuver: bestDist,
+    remainingM,
+    remainingS
+  };
 }
 
 function formatManeuverDistance(m: number): string {
@@ -80,7 +96,7 @@ function formatManeuverDistance(m: number): string {
   return `za ${(m / 1000).toFixed(1)} km`;
 }
 
-export default function NavigationOverlay({
+function NavigationOverlayInner({
   route,
   userLocation,
   onExit,
@@ -159,7 +175,6 @@ export default function NavigationOverlay({
         </div>
       )}
 
-      {/* Plakietka ostrzegawcza o incydencie przed nami */}
       {upcomingIncident && upcomingIncident.distance < 1000 && (
         <div className="nav-alert" role="alert">
           <AlertTriangle size={18} />
@@ -189,7 +204,9 @@ export default function NavigationOverlay({
           {incidentCount > 0 && (
             <div className="nav-stat nav-stat--incidents" title="Zdarzenia na trasie">
               <AlertTriangle size={14} />
-              <span className="nav-stat__label nav-stat__label--inline">{incidentCount}</span>
+              <span className="nav-stat__label nav-stat__label--inline">
+                {incidentCount}
+              </span>
             </div>
           )}
           <button
@@ -205,3 +222,5 @@ export default function NavigationOverlay({
     </>
   );
 }
+
+export default memo(NavigationOverlayInner);

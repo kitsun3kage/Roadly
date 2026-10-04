@@ -1238,3 +1238,150 @@ input[type='range']::-moz-range-thumb {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   cursor: pointer;
 }
+
+/* ─── Onboarding modal ────────────────────────────────────────── */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  padding-top: calc(20px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+.onboarding-modal {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 26px 22px 22px;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: onboarding-in 320ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+@keyframes onboarding-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.onboarding-modal__logo {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #ff3b30 0%, #ff9500 50%, #ffcc00 100%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  box-shadow: 0 6px 20px rgba(255, 107, 0, 0.35);
+}
+
+.onboarding-modal__title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.onboarding-modal__sub {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0 0 6px;
+  line-height: 1.45;
+}
+
+.onboarding-perm {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-lg);
+}
+
+.onboarding-perm__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.onboarding-perm__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.onboarding-perm__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.onboarding-perm__desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.onboarding-perm .btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* ─── Wydajność: containment dla ciężkich paneli ───────────────── */
+.app__sidebar,
+.panel,
+.nav-banner,
+.nav-progress__card,
+.nav-arrived,
+.toast,
+.onboarding-modal {
+  contain: layout style paint;
+}
+
+.app__map {
+  contain: strict;
+}
+
+/* ─── will-change tylko tam, gdzie naprawdę trzeba ────────────── */
+.roadly-location__svg {
+  will-change: transform;
+}
+
+/* Marker incydentu — NIE używamy will-change, bo ich jest wiele */
+.roadly-incident-marker {
+  /* will-change celowo pominięte */
+}
+
+/* ─── Reduced motion ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .roadly-location__svg,
+  .roadly-incident-marker,
+  .onboarding-modal,
+  .nav-arrived,
+  .nav-alert {
+    transition: none !important;
+    animation: none !important;
+  }
+}

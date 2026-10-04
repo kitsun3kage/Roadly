@@ -1,4 +1,14 @@
-import { ArrowLeft, Copy, Globe, MapPin, Navigation, Phone, Share2, Star } from 'lucide-react';
+import { memo } from 'react';
+import {
+  ArrowLeft,
+  Copy,
+  Globe,
+  MapPin,
+  Navigation,
+  Phone,
+  Share2,
+  Star
+} from 'lucide-react';
 import type { Place } from '../../types';
 import { formatCoords } from '../../lib/utils';
 
@@ -12,7 +22,7 @@ interface Props {
   onShowToast: (msg: string, kind?: 'info' | 'error') => void;
 }
 
-export default function PlaceDetails({
+function PlaceDetailsInner({
   place,
   onClose,
   onSetOrigin,
@@ -47,11 +57,19 @@ export default function PlaceDetails({
   return (
     <div className="panel">
       <div className="panel__header">
-        <button className="btn btn--ghost btn--icon" aria-label="Wróć" onClick={onClose}>
+        <button
+          className="btn btn--ghost btn--icon"
+          aria-label="Wróć"
+          onClick={onClose}
+        >
           <ArrowLeft size={18} />
         </button>
         <div style={{ marginLeft: 'auto' }}>
-          <button className="btn btn--ghost btn--icon" aria-label="Udostępnij" onClick={share}>
+          <button
+            className="btn btn--ghost btn--icon"
+            aria-label="Udostępnij"
+            onClick={share}
+          >
             <Share2 size={18} />
           </button>
         </div>
@@ -139,3 +157,5 @@ export default function PlaceDetails({
     </div>
   );
 }
+
+export default memo(PlaceDetailsInner);
