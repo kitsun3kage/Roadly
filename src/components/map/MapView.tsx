@@ -53,7 +53,6 @@ interface Props {
 const ROUTE_SOURCE = 'roadly-route';
 const ALT_SOURCE = 'roadly-alt-route';
 const PROGRESS_SOURCE = 'roadly-route-progress';
-const INCIDENT_SOURCE = 'roadly-incidents';
 
 const NAV_ZOOM = 17;
 const NAV_PITCH = 60;
@@ -76,6 +75,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const userAccMarkerRef = useRef<maplibregl.Marker | null>(null);
   const savedMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const incidentMarkersRef = useRef<maplibregl.Marker[]>([]);
   const popupRef = useRef<maplibregl.Popup | null>(null);
 
   const firstStyleRenderRef = useRef(true);
@@ -123,60 +123,13 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       }
     });
 
-    // Klik w zdarzenie → popup
-    map.on('click', 'roadly-incidents-symbol', (e) => {
-      const f = e.features?.[0];
-      if (!f) return;
-      const p = f.properties ?? {};
-      const coords = (f.geometry as any)?.coordinates as [number, number] | undefined;
-      if (!coords) return;
-
-      popupRef.current?.remove();
-      const cat = Number(p.category) || 0;
-      const html = `
-        <div style="min-width:200px;font-family:var(--font-sans);">
-          <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:14px;">
-            <span style="font-size:16px;">${incidentIcon(cat)}</span>
-            <span>${escapeHtml(incidentLabel(cat))}</span>
-          </div>
-          <div style="margin-top:6px;font-size:13px;color:#444;">${escapeHtml(
-            String(p.description ?? '')
-          )}</div>
-          ${
-            p.delay
-              ? `<div style="margin-top:6px;font-size:12px;color:#666;">Opóźnienie: ${Math.round(
-                  Number(p.delay) / 60
-                )} min</div>`
-              : ''
-          }
-          ${
-            p.roads
-              ? `<div style="margin-top:4px;font-size:12px;color:#666;">Droga: ${escapeHtml(
-                  String(p.roads)
-                )}</div>`
-              : ''
-          }
-        </div>
-      `;
-
-      popupRef.current = new maplibregl.Popup({ closeButton: true, closeOnClick: true })
-        .setLngLat(coords)
-        .setHTML(html)
-        .addTo(map);
-    });
-
-    map.on('mouseenter', 'roadly-incidents-symbol', () => {
-      map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', 'roadly-incidents-symbol', () => {
-      map.getCanvas().style.cursor = '';
-    });
-
     mapRef.current = map;
 
     return () => {
       popupRef.current?.remove();
       popupRef.current = null;
+      incidentMarkersRef.current.forEach((m) => m.remove());
+      incidentMarkersRef.current = [];
       map.remove();
       mapRef.current = null;
       placeMarkerRef.current?.remove();
@@ -190,7 +143,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Główny efekt: warstwy + dane ────────────────────────────────
+  // ─── Warstwy trasy (gradient + outline + progress) ────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -208,7 +161,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
         props.route ?? null,
         props.userLocation ?? null
       );
-      applyIncidentsData(map, props.incidents ?? [], props.route ?? null);
     };
 
     if (map.isStyleLoaded()) apply();
@@ -226,11 +178,114 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     props.navigationMode,
     props.userLocation,
     props.styleId,
-    props.traffic,
-    props.incidents
+    props.traffic
   ]);
 
-  // ─── Zmiana stylu ─────────────────────────────────────────────────
+  // ─── Markery incydentów (DOM — niezależne od stylu mapy) ──────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Sprzątanie poprzednich markerów
+    incidentMarkersRef.current.forEach((m) => m.remove());
+    incidentMarkersRef.current = [];
+
+    const incidents = props.incidents ?? [];
+    if (!incidents.length) return;
+
+    const route = props.route;
+
+    for (const inc of incidents) {
+      if (!isFinite(inc.coordinates.lng) || !isFinite(inc.coordinates.lat)) continue;
+
+      // Snap: incydent ląduje dokładnie na trasie (nie obok)
+      const coord: Coordinates =
+        route && route.geometry.length >= 2
+          ? closestPointOnPolyline(inc.coordinates, route.geometry)
+          : inc.coordinates;
+
+      // Element DOM markera
+      const el = document.createElement('div');
+      el.className = 'roadly-incident-marker';
+      el.style.background = incidentColor(inc.category);
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      el.setAttribute(
+        'aria-label',
+        `${incidentLabel(inc.category)}: ${inc.description}`
+      );
+      el.title = `${incidentLabel(inc.category)} — ${inc.description}`;
+
+      const span = document.createElement('span');
+      span.textContent = incidentIcon(inc.category);
+      el.appendChild(span);
+
+      // Popup po kliknięciu
+      const openPopup = () => {
+        popupRef.current?.remove();
+        const cat = inc.category;
+        const html = `
+          <div style="min-width:200px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,sans-serif;">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:14px;">
+              <span style="font-size:16px;">${incidentIcon(cat)}</span>
+              <span>${escapeHtml(incidentLabel(cat))}</span>
+            </div>
+            <div style="margin-top:6px;font-size:13px;color:#444;">${escapeHtml(
+              inc.description
+            )}</div>
+            ${
+              inc.delay > 0
+                ? `<div style="margin-top:6px;font-size:12px;color:#666;">Opóźnienie: ${Math.round(
+                    inc.delay / 60
+                  )} min</div>`
+                : ''
+            }
+            ${
+              inc.roadNumbers.length > 0
+                ? `<div style="margin-top:4px;font-size:12px;color:#666;">Droga: ${escapeHtml(
+                    inc.roadNumbers.join(' / ')
+                  )}</div>`
+                : ''
+            }
+          </div>
+        `;
+        popupRef.current = new maplibregl.Popup({
+          closeButton: true,
+          closeOnClick: true,
+          offset: 20
+        })
+          .setLngLat([coord.lng, coord.lat])
+          .setHTML(html)
+          .addTo(map);
+      };
+
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openPopup();
+      });
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          openPopup();
+        }
+      });
+
+      const marker = new maplibregl.Marker({
+        element: el,
+        anchor: 'center'
+      })
+        .setLngLat([coord.lng, coord.lat])
+        .addTo(map);
+
+      incidentMarkersRef.current.push(marker);
+    }
+
+    return () => {
+      // nie usuwamy tutaj — kolejny render effect sprząta na początku
+    };
+  }, [props.incidents, props.route]);
+
+  // ─── Zmiana stylu (pomijamy pierwszy render) ─────────────────────
   useEffect(() => {
     if (firstStyleRenderRef.current) {
       firstStyleRenderRef.current = false;
@@ -260,7 +315,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.navigationMode]);
 
-  // ─── Marker wybranego miejsca ─────────────────────────────────────
+  // ─── Markery: start / cel / wybrane / zapisane ────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -274,7 +329,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.selectedPlace]);
 
-  // ─── Marker startu ────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -288,7 +342,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.fromMarker]);
 
-  // ─── Marker celu ──────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -302,7 +355,23 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.toMarker]);
 
-  // ─── Marker użytkownika ───────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    savedMarkersRef.current.forEach((m) => m.remove());
+    savedMarkersRef.current = [];
+    (props.savedPlaces ?? []).forEach((p) => {
+      const el = document.createElement('div');
+      el.className = 'roadly-marker';
+      el.style.background = '#ff9f0a';
+      const m = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([p.coordinates.lng, p.coordinates.lat])
+        .addTo(map);
+      savedMarkersRef.current.push(m);
+    });
+  }, [props.savedPlaces]);
+
+  // ─── Marker użytkownika (strzałka SVG) ────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -411,23 +480,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     });
   }, [props.userLocation, props.followUser, props.navigationMode]);
 
-  // ─── Zapisane miejsca ─────────────────────────────────────────────
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    savedMarkersRef.current.forEach((m) => m.remove());
-    savedMarkersRef.current = [];
-    (props.savedPlaces ?? []).forEach((p) => {
-      const el = document.createElement('div');
-      el.className = 'roadly-marker';
-      el.style.background = '#ff9f0a';
-      const m = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat([p.coordinates.lng, p.coordinates.lat])
-        .addTo(map);
-      savedMarkersRef.current.push(m);
-    });
-  }, [props.savedPlaces]);
-
   useImperativeHandle(
     ref,
     (): MapViewHandle => ({
@@ -514,7 +566,6 @@ function computeProgressLine(route: Route, user: Coordinates): [number, number][
 }
 
 function ensureLayers(map: MLMap) {
-  // Alt trasy
   if (!map.getSource(ALT_SOURCE)) {
     map.addSource(ALT_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -528,7 +579,6 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // Trasa główna
   if (!map.getSource(ROUTE_SOURCE)) {
     map.addSource(ROUTE_SOURCE, {
       type: 'geojson',
@@ -562,7 +612,6 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // Szary pokonany odcinek
   if (!map.getSource(PROGRESS_SOURCE)) {
     map.addSource(PROGRESS_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -573,52 +622,6 @@ function ensureLayers(map: MLMap) {
       source: PROGRESS_SOURCE,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': ROUTE_PROGRESS_COLOR, 'line-width': 7, 'line-opacity': 0.95 }
-    });
-  }
-
-  // ─── Zdarzenia (na samej górze, zawsze widoczne) ─────────────────
-  if (!map.getSource(INCIDENT_SOURCE)) {
-    map.addSource(INCIDENT_SOURCE, { type: 'geojson', data: emptyFC() });
-  }
-  // Duże halo (poświata)
-  if (!map.getLayer('roadly-incidents-halo')) {
-    map.addLayer({
-      id: 'roadly-incidents-halo',
-      type: 'circle',
-      source: INCIDENT_SOURCE,
-      paint: {
-        'circle-radius': 22,
-        'circle-color': ['get', 'color'],
-        'circle-opacity': 0.25
-      }
-    });
-  }
-  // Główny znacznik (kolorowe kółko z białą obwódką)
-  if (!map.getLayer('roadly-incidents-symbol')) {
-    map.addLayer({
-      id: 'roadly-incidents-symbol',
-      type: 'circle',
-      source: INCIDENT_SOURCE,
-      paint: {
-        'circle-radius': 15,
-        'circle-color': ['get', 'color'],
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 3
-      }
-    });
-  }
-  // Ikona emoji w środku
-  if (!map.getLayer('roadly-incidents-text')) {
-    map.addLayer({
-      id: 'roadly-incidents-text',
-      type: 'symbol',
-      source: INCIDENT_SOURCE,
-      layout: {
-        'text-field': ['get', 'icon'],
-        'text-size': 16,
-        'text-allow-overlap': true,
-        'text-ignore-placement': true
-      }
     });
   }
 }
@@ -661,7 +664,6 @@ function applyRouteGradient(
 ) {
   if (!map.getLayer('roadly-route-gradient-line')) return;
 
-  // Fallback: gradient 0→1 z jednym kolorem (NIGDY null!)
   if (!route || route.geometry.length < 2 || !traffic || traffic.samples.length < 2) {
     const flatGradient: any = [
       'interpolate',
@@ -753,57 +755,6 @@ function applyProgressData(
       }
     ]
   });
-}
-
-/**
- * Rysuje zdarzenia z TomTom. Współrzędne są "przyciągane" do najbliższego
- * punktu na trasie — dzięki temu markery leżą dokładnie NA drodze, a nie
- * obok (TomTom czasem zwraca pozycje z pobocza/budynków).
- */
-function applyIncidentsData(
-  map: MLMap,
-  incidents: TrafficIncident[],
-  route: Route | null
-) {
-  const src = map.getSource(INCIDENT_SOURCE) as maplibregl.GeoJSONSource | undefined;
-  if (!src) return;
-
-  if (!incidents.length) {
-    src.setData(emptyFC());
-    return;
-  }
-
-  const features = incidents
-    .map((inc) => {
-      // Walidacja współrzędnych
-      if (!isFinite(inc.coordinates.lng) || !isFinite(inc.coordinates.lat)) {
-        return null;
-      }
-
-      // Snapping do trasy — incydent ląduje dokładnie na drodze
-      let coords: [number, number] = [inc.coordinates.lng, inc.coordinates.lat];
-      if (route && route.geometry.length >= 2) {
-        const snapped = closestPointOnPolyline(inc.coordinates, route.geometry);
-        coords = [snapped.lng, snapped.lat];
-      }
-
-      return {
-        type: 'Feature' as const,
-        properties: {
-          id: inc.id,
-          category: inc.category,
-          description: inc.description,
-          delay: inc.delay,
-          roads: inc.roadNumbers.join(' / '),
-          color: incidentColor(inc.category),
-          icon: incidentIcon(inc.category)
-        },
-        geometry: { type: 'Point' as const, coordinates: coords }
-      };
-    })
-    .filter((f): f is GeoJSON.Feature => f !== null);
-
-  src.setData({ type: 'FeatureCollection', features });
 }
 
 export default MapView;

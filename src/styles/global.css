@@ -1167,3 +1167,36 @@ h4 {
   font-size: 11px;
   color: var(--text-tertiary);
 }
+
+/* ─── Markery incydentów drogowych (DOM, zawsze widoczne) ──────── */
+.roadly-incident-marker {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  cursor: pointer;
+  transition: transform 120ms ease;
+  will-change: transform;
+  color: #ffffff;
+  user-select: none;
+}
+
+.roadly-incident-marker:hover {
+  transform: scale(1.15);
+  z-index: 10;
+}
+
+.roadly-incident-marker:focus-visible {
+  outline: 3px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+.roadly-incident-marker > span {
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+  pointer-events: none;
+}
