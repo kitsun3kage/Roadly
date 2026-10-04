@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowDownUp,
   Calculator,
   LocateFixed,
@@ -10,6 +11,11 @@ import {
 } from 'lucide-react';
 import type { Place, Route, TravelProfile } from '../../types';
 import { formatDistance, formatDuration } from '../../lib/utils';
+import {
+  incidentIcon,
+  incidentLabel,
+  type TrafficIncident
+} from '../../services/traffic';
 
 interface Props {
   fromPlace: Place | null;
@@ -31,6 +37,7 @@ interface Props {
   error: string | null;
   onStartNavigation: () => void;
   geoBusy: boolean;
+  incidents?: TrafficIncident[];
 }
 
 const PROFILES: { id: TravelProfile; label: string }[] = [
@@ -59,7 +66,8 @@ export default function RoutePanel(props: Props) {
     loading,
     error,
     onStartNavigation,
-    geoBusy
+    geoBusy,
+    incidents = []
   } = props;
 
   const activeRoute = routes.find((r) => r.id === activeRouteId) ?? routes[0] ?? null;
@@ -72,7 +80,10 @@ export default function RoutePanel(props: Props) {
         <h2 className="panel__title">Trasa</h2>
       </div>
 
-      <div className="panel__section" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        className="panel__section"
+        style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+      >
         <div className="field">
           <span className="field__dot field__dot--from" aria-hidden />
           <input
@@ -82,6 +93,7 @@ export default function RoutePanel(props: Props) {
             aria-label="Punkt startowy"
           />
           <button
+            type="button"
             className="btn btn--ghost btn--icon"
             aria-label="Wybierz punkt startowy"
             onClick={onPickFrom}
@@ -90,6 +102,7 @@ export default function RoutePanel(props: Props) {
           </button>
           {fromPlace ? (
             <button
+              type="button"
               className="btn btn--ghost btn--icon"
               aria-label="Wyczyść punkt startowy"
               onClick={() => onFromChange(null)}
@@ -98,6 +111,7 @@ export default function RoutePanel(props: Props) {
             </button>
           ) : (
             <button
+              type="button"
               className="btn btn--ghost btn--icon"
               aria-label="Użyj mojej lokalizacji"
               onClick={onUseMyLocation}
@@ -117,6 +131,7 @@ export default function RoutePanel(props: Props) {
             aria-label="Punkt docelowy"
           />
           <button
+            type="button"
             className="btn btn--ghost btn--icon"
             aria-label="Wybierz punkt docelowy"
             onClick={onPickTo}
@@ -125,6 +140,7 @@ export default function RoutePanel(props: Props) {
           </button>
           {toPlace && (
             <button
+              type="button"
               className="btn btn--ghost btn--icon"
               aria-label="Wyczyść punkt docelowy"
               onClick={() => onToChange(null)}
@@ -135,7 +151,12 @@ export default function RoutePanel(props: Props) {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button className="btn btn--ghost" onClick={onSwap} aria-label="Zamień punkty">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={onSwap}
+            aria-label="Zamień punkty"
+          >
             <ArrowDownUp size={14} /> Zamień
           </button>
         </div>
@@ -144,6 +165,7 @@ export default function RoutePanel(props: Props) {
           {PROFILES.map((p) => (
             <button
               key={p.id}
+              type="button"
               className={`route-alt__chip${profile === p.id ? ' route-alt__chip--active' : ''}`}
               onClick={() => onProfileChange(p.id)}
             >
@@ -155,6 +177,7 @@ export default function RoutePanel(props: Props) {
 
       <div className="btn-row">
         <button
+          type="button"
           className="btn btn--primary"
           onClick={onCalculate}
           disabled={!canCalculate || loading}
@@ -162,7 +185,7 @@ export default function RoutePanel(props: Props) {
           <Calculator size={16} /> {loading ? 'Obliczanie…' : 'Oblicz trasę'}
         </button>
         {routes.length > 0 && (
-          <button className="btn" onClick={onClear}>
+          <button type="button" className="btn" onClick={onClear}>
             <Trash2 size={16} /> Wyczyść
           </button>
         )}
@@ -179,21 +202,18 @@ export default function RoutePanel(props: Props) {
         <>
           <div className="route-summary">
             <div className="route-summary__stat">
-              <span className="route-summary__value">{formatDistance(activeRoute.distance)}</span>
+              <span className="route-summary__value">
+                {formatDistance(activeRoute.distance)}
+              </span>
               <span className="route-summary__label">Dystans</span>
             </div>
             <div className="route-summary__stat">
-              <span className="route-summary__value">{formatDuration(activeRoute.duration)}</span>
+              <span className="route-summary__value">
+                {formatDuration(activeRoute.duration)}
+              </span>
               <span className="route-summary__label">Czas</span>
             </div>
           </div>
-
-          {profile !== 'driving' && (
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-              Trasa dla profilu „{PROFILES.find((p) => p.id === profile)?.label}” jest przybliżona —
-              publiczny serwer OSRM udostępnia wyłącznie profil samochodowy.
-            </div>
-          )}
 
           {routes.length > 1 && (
             <>
@@ -202,19 +222,61 @@ export default function RoutePanel(props: Props) {
                 {routes.map((r, i) => (
                   <button
                     key={r.id}
-                    className={`route-alt__chip${r.id === activeRoute.id ? ' route-alt__chip--active' : ''}`}
+                    type="button"
+                    className={`route-alt__chip${
+                      r.id === activeRoute.id ? ' route-alt__chip--active' : ''
+                    }`}
                     onClick={() => onActiveRouteChange(r.id)}
                   >
-                    {i === 0 ? 'Główna' : `Wariant ${i + 1}`} · {formatDuration(r.duration)}
+                    {i === 0 ? 'Główna' : `Wariant ${i + 1}`} ·{' '}
+                    {formatDuration(r.duration)}
                   </button>
                 ))}
               </div>
             </>
           )}
 
-          <button className="btn btn--primary btn--block" onClick={onStartNavigation}>
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            onClick={onStartNavigation}
+          >
             <Navigation size={16} /> Rozpocznij nawigację
           </button>
+
+          {incidents.length > 0 && (
+            <>
+              <div className="panel__section-title" style={{ marginTop: 4 }}>
+                Zdarzenia na trasie ({incidents.length})
+              </div>
+              <ul className="incidents-list">
+                {incidents.map((inc) => (
+                  <li key={inc.id} className="incident-row">
+                    <span className="incident-row__icon" aria-hidden>
+                      {incidentIcon(inc.category)}
+                    </span>
+                    <div className="incident-row__body">
+                      <div className="incident-row__title">
+                        {incidentLabel(inc.category)}
+                      </div>
+                      <div className="incident-row__desc">{inc.description}</div>
+                      <div className="incident-row__meta">
+                        {inc.roadNumbers.length > 0 && (
+                          <span>{inc.roadNumbers.join(' / ')}</span>
+                        )}
+                        {inc.delay > 0 && (
+                          <span>opóźnienie {Math.round(inc.delay / 60)} min</span>
+                        )}
+                        <span>
+                          za {Math.round(inc.distanceFromStart / 100) / 10} km
+                        </span>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           <div className="panel__section-title" style={{ marginTop: 4 }}>
             Kroki trasy
@@ -244,6 +306,22 @@ export default function RoutePanel(props: Props) {
           <div className="state__message">
             Wybierz punkt startowy i docelowy, a następnie oblicz trasę.
           </div>
+        </div>
+      )}
+
+      {incidents.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+            color: 'var(--text-tertiary)',
+            padding: '4px 0'
+          }}
+        >
+          <AlertTriangle size={14} />
+          <span>Dane o zdarzeniach: TomTom Traffic Incidents</span>
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { CheckCircle2, Locate, Navigation as NavIcon, Volume2, VolumeX, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Locate, Navigation as NavIcon, Volume2, VolumeX, X } from 'lucide-react';
 import type { Coordinates, Route, RouteStep } from '../../types';
 import { formatDistance, formatDuration, formatETA } from '../../lib/utils';
 import {
@@ -8,7 +8,7 @@ import {
   remainingDistanceAlongRoute
 } from '../../lib/geo';
 import { useVoiceGuidance } from '../../hooks/useVoiceGuidance';
-import { congestionColor, congestionLabel, type TrafficReport } from '../../services/traffic';
+import type { TrafficIncident, TrafficReport } from '../../services/traffic';
 
 interface Props {
   route: Route;
@@ -19,8 +19,10 @@ interface Props {
   hasArrived: boolean;
   destinationName: string | null;
   traffic: TrafficReport | null;
+  incidents: TrafficIncident[];
   voiceEnabled: boolean;
   onToggleVoice: () => void;
+  upcomingIncident: { id: string; description: string; distance: number } | null;
 }
 
 interface NavState {
@@ -44,7 +46,6 @@ function computeNavState(route: Route, user: Coordinates | null): NavState {
   }
 
   const userProj = closestSegment(user, route.geometry);
-
   let step: RouteStep | null = null;
   let stepIndex = route.steps.length - 1;
   let bestDist = Infinity;
@@ -67,16 +68,9 @@ function computeNavState(route: Route, user: Coordinates | null): NavState {
   }
 
   const remainingM = remainingDistanceAlongRoute(user, route.geometry);
-  const remainingS =
-    route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
+  const remainingS = route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
 
-  return {
-    step,
-    stepIndex,
-    distanceToManeuver: bestDist,
-    remainingM,
-    remainingS
-  };
+  return { step, stepIndex, distanceToManeuver: bestDist, remainingM, remainingS };
 }
 
 function formatManeuverDistance(m: number): string {
@@ -95,8 +89,10 @@ export default function NavigationOverlay({
   hasArrived,
   destinationName,
   traffic,
+  incidents,
   voiceEnabled,
-  onToggleVoice
+  onToggleVoice,
+  upcomingIncident
 }: Props) {
   const nav = useMemo(() => computeNavState(route, userLocation), [route, userLocation]);
 
@@ -106,12 +102,15 @@ export default function NavigationOverlay({
     stepIndex: nav.stepIndex,
     instruction: nav.step?.instruction ?? '',
     distanceToManeuver: nav.distanceToManeuver,
-    hasArrived
+    hasArrived,
+    upcomingIncident
   });
 
   const remainingS = traffic
     ? nav.remainingS * traffic.durationMultiplier
     : nav.remainingS;
+
+  const incidentCount = incidents.length;
 
   return (
     <>
@@ -160,6 +159,19 @@ export default function NavigationOverlay({
         </div>
       )}
 
+      {/* Plakietka ostrzegawcza o incydencie przed nami */}
+      {upcomingIncident && upcomingIncident.distance < 1000 && (
+        <div className="nav-alert" role="alert">
+          <AlertTriangle size={18} />
+          <div className="nav-alert__body">
+            <div className="nav-alert__title">{upcomingIncident.description}</div>
+            <div className="nav-alert__sub">
+              za {formatDistance(upcomingIncident.distance)}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="nav-progress">
         <div className="nav-progress__card">
           <div className="nav-stat">
@@ -174,24 +186,12 @@ export default function NavigationOverlay({
             <span className="nav-stat__value">{formatETA(remainingS)}</span>
             <span className="nav-stat__label">Przyjazd</span>
           </div>
-
-          {traffic && (
-            <div
-              className="nav-stat nav-stat--traffic"
-              title={`Średnie natężenie: ${(traffic.averageCongestion * 100).toFixed(0)}%`}
-            >
-              <span
-                className="nav-traffic__dot"
-                style={{ background: congestionColor(traffic.averageCongestion) }}
-              />
-              <span className="nav-stat__label nav-stat__label--inline">
-                {traffic.hasRoadClosure
-                  ? 'Zamknięta droga'
-                  : congestionLabel(traffic.averageCongestion)}
-              </span>
+          {incidentCount > 0 && (
+            <div className="nav-stat nav-stat--incidents" title="Zdarzenia na trasie">
+              <AlertTriangle size={14} />
+              <span className="nav-stat__label nav-stat__label--inline">{incidentCount}</span>
             </div>
           )}
-
           <button
             type="button"
             className="btn btn--ghost btn--icon"

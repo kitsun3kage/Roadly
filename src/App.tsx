@@ -94,7 +94,31 @@ export default function App() {
   const deviceHeading = useDeviceHeading(inNavMode);
   const displayHeading = geo.heading ?? deviceHeading;
 
-  const { report: trafficReport } = useTraffic(activeRoute, inNavMode);
+  const { report: trafficReport, incidents } = useTraffic(activeRoute, inNavMode);
+
+  // ─── Najbliższe zdarzenie przed nami ──────────────────────────────
+  const upcomingIncident = useMemo(() => {
+    if (!inNavMode || !geo.position || !activeRoute) return null;
+    const userAlong = distanceMeters(geo.position.coordinates, activeRoute.geometry[0] && {
+      lng: activeRoute.geometry[0][0],
+      lat: activeRoute.geometry[0][1]
+    } as any) || 0;
+    void userAlong;
+    let best: { id: string; description: string; distance: number } | null = null;
+    for (const inc of incidents) {
+      const d = distanceMeters(geo.position.coordinates, inc.coordinates);
+      // Tylko zdarzenia przed nami (heurystyka: dystans w linii prostej)
+      if (d > 5000) continue;
+      if (!best || d < best.distance) {
+        best = {
+          id: inc.id,
+          description: inc.description || 'Utrudnienie na drodze',
+          distance: d
+        };
+      }
+    }
+    return best;
+  }, [inNavMode, geo.position, activeRoute, incidents]);
 
   // Zapamiętaj preferencje
   useEffect(() => {
@@ -133,21 +157,13 @@ export default function App() {
     }
   }, [theme]);
 
-  useEffect(() => {
-    storage.setRecentSearches(recentSearches);
-  }, [recentSearches]);
-  useEffect(() => {
-    storage.setCollections(collections);
-  }, [collections]);
-  useEffect(() => {
-    storage.setSavedPlaces(savedPlaces);
-  }, [savedPlaces]);
+  useEffect(() => { storage.setRecentSearches(recentSearches); }, [recentSearches]);
+  useEffect(() => { storage.setCollections(collections); }, [collections]);
+  useEffect(() => { storage.setSavedPlaces(savedPlaces); }, [savedPlaces]);
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = '';
-    };
+    return () => { document.body.style.overflow = ''; };
   }, []);
 
   const showToast = useCallback((message: string, kind: 'info' | 'error' = 'info') => {
@@ -155,7 +171,6 @@ export default function App() {
     window.setTimeout(() => setToast(null), 5000);
   }, []);
 
-  // ─── Wybór miejsca ─────────────────────────────────────────────────
   const handleSelectPlace = useCallback(
     (place: Place, opts: { keepSidebar?: boolean } = {}) => {
       if (pickTarget === 'from') {
@@ -205,7 +220,6 @@ export default function App() {
     setSidebarOpen(true);
   }, []);
 
-  // ─── Routing ───────────────────────────────────────────────────────
   const handleCalculateRoute = useCallback(
     async (opts?: { silent?: boolean }) => {
       const from = fromPlace;
@@ -255,7 +269,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromPlace?.id, toPlace?.id, profile]);
 
-  // ─── Reroute ───────────────────────────────────────────────────────
   const handleReroute = useCallback(async () => {
     if (!geo.position || !toPlace || !activeRoute) return;
     if (reroutingRef.current) return;
@@ -308,12 +321,10 @@ export default function App() {
     }
   }, [inNavMode, activeRoute, geo.position, hasArrived, handleReroute]);
 
-  // ─── Dojazd ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!inNavMode) return;
     if (!toPlace || !geo.position) return;
     if (hasArrived) return;
-
     const d = distanceMeters(geo.position.coordinates, toPlace.coordinates);
     if (d < ARRIVAL_THRESHOLD_M) {
       setHasArrived(true);
@@ -323,7 +334,6 @@ export default function App() {
     }
   }, [inNavMode, toPlace, geo.position, hasArrived, showToast]);
 
-  // ─── Lokalizacja ───────────────────────────────────────────────────
   const handleUseMyLocationAsFrom = useCallback(async () => {
     const loc = geo.position ?? (await geo.ensurePosition());
     if (!loc) {
@@ -391,10 +401,8 @@ export default function App() {
     offRouteSinceRef.current = null;
   }, []);
 
-  // ─── Nawigacja ─────────────────────────────────────────────────────
   const handleStartNavigation = useCallback(() => {
     if (!activeRoute) return;
-
     setNavigationActive(true);
     setHasArrived(false);
     setFollowUser(true);
@@ -402,10 +410,7 @@ export default function App() {
     setSelectedPlace(null);
     offRouteSinceRef.current = null;
     lastRerouteRef.current = 0;
-
-    if (!geo.position) {
-      void geo.ensurePosition();
-    }
+    if (!geo.position) void geo.ensurePosition();
   }, [activeRoute, geo]);
 
   const handleExitNavigation = useCallback(() => {
@@ -430,12 +435,9 @@ export default function App() {
 
   const handleRecenterNavigation = useCallback(() => {
     setFollowUser(true);
-    if (geo.position) {
-      mapRef.current?.flyTo(geo.position.coordinates, 17);
-    }
+    if (geo.position) mapRef.current?.flyTo(geo.position.coordinates, 17);
   }, [geo.position]);
 
-  // ─── Zapisane miejsca ──────────────────────────────────────────────
   const ensureDefaultCollection = useCallback((): string => {
     if (collections.length > 0) return collections[0].id;
     const c: Collection = {
@@ -456,12 +458,7 @@ export default function App() {
         showToast('Miejsce jest już zapisane.');
         return;
       }
-      const sp: SavedPlace = {
-        ...place,
-        savedId: uid(),
-        collectionId: cid,
-        savedAt: Date.now()
-      };
+      const sp: SavedPlace = { ...place, savedId: uid(), collectionId: cid, savedAt: Date.now() };
       setSavedPlaces((prev) => [sp, ...prev]);
       showToast('Zapisano miejsce.');
     },
@@ -473,12 +470,7 @@ export default function App() {
   }, []);
 
   const handleCreateCollection = useCallback((name: string) => {
-    const c: Collection = {
-      id: uid(),
-      name,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
+    const c: Collection = { id: uid(), name, createdAt: Date.now(), updatedAt: Date.now() };
     setCollections((prev) => [...prev, c]);
     return c.id;
   }, []);
@@ -497,7 +489,6 @@ export default function App() {
   const handleClearRecent = useCallback(() => setRecentSearches([]), []);
   const handleClosePlaceDetails = useCallback(() => setSelectedPlace(null), []);
 
-  // ─── WIDOK ─────────────────────────────────────────────────────────
   return (
     <div className={`app${inNavMode ? ' app--navigating' : ''}`}>
       <MapView
@@ -514,6 +505,8 @@ export default function App() {
         savedPlaces={savedPlaces}
         followUser={followUser}
         navigationMode={inNavMode}
+        traffic={trafficReport}
+        incidents={incidents}
       />
 
       {!inNavMode && (
@@ -585,6 +578,7 @@ export default function App() {
                   error={routingError}
                   onStartNavigation={handleStartNavigation}
                   geoBusy={geo.loading}
+                  incidents={incidents}
                 />
               ) : view === 'collections' ? (
                 <CollectionsPanel
@@ -676,20 +670,10 @@ export default function App() {
 
       {!inNavMode && (
         <div className="map-controls" role="group" aria-label="Sterowanie mapą">
-          <button
-            type="button"
-            className="map-control"
-            aria-label="Przybliż"
-            onClick={() => mapRef.current?.getMap()?.zoomIn()}
-          >
+          <button type="button" className="map-control" aria-label="Przybliż" onClick={() => mapRef.current?.getMap()?.zoomIn()}>
             <Plus size={18} />
           </button>
-          <button
-            type="button"
-            className="map-control"
-            aria-label="Oddal"
-            onClick={() => mapRef.current?.getMap()?.zoomOut()}
-          >
+          <button type="button" className="map-control" aria-label="Oddal" onClick={() => mapRef.current?.getMap()?.zoomOut()}>
             <Minus size={18} />
           </button>
           <button
@@ -715,12 +699,7 @@ export default function App() {
               <Locate size={18} color={geo.permission === 'denied' ? 'var(--danger)' : undefined} />
             )}
           </button>
-          <button
-            type="button"
-            className="map-control"
-            aria-label="Przywróć kierunek północny"
-            onClick={() => mapRef.current?.resetNorth()}
-          >
+          <button type="button" className="map-control" aria-label="Przywróć kierunek północny" onClick={() => mapRef.current?.resetNorth()}>
             <Compass size={18} />
           </button>
         </div>
@@ -748,8 +727,10 @@ export default function App() {
           hasArrived={hasArrived}
           destinationName={toPlace?.name ?? null}
           traffic={trafficReport}
+          incidents={incidents}
           voiceEnabled={voiceEnabled}
           onToggleVoice={handleToggleVoice}
+          upcomingIncident={upcomingIncident}
         />
       )}
 

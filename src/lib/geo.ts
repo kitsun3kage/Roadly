@@ -1,5 +1,6 @@
 import type { Coordinates } from '../types';
 
+// ─── Podstawy ─────────────────────────────────────────────────────
 export function distanceMeters(a: Coordinates, b: Coordinates): number {
   const R = 6371000;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -22,6 +23,7 @@ export function bearingBetween(a: Coordinates, b: Coordinates): number {
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
+/** Najkrótsza różnica kątowa między bearingami, w zakresie [-180, 180]. */
 export function bearingDelta(from: number, to: number): number {
   let d = to - from;
   while (d > 180) d -= 360;
@@ -29,15 +31,20 @@ export function bearingDelta(from: number, to: number): number {
   return d;
 }
 
+// ─── Projekcja na łamaną ──────────────────────────────────────────
 export interface SegmentProjection {
   /** Indeks segmentu w łamanej (0..len-2). */
   segmentIndex: number;
-  /** Parametr w segmencie 0..1 (0 = początek segmentu). */
+  /** Parametr w segmencie 0..1 (0 = początek segmentu, 1 = koniec). */
   t: number;
   /** Odległość punktu od rzutu (metry). */
   distance: number;
 }
 
+/**
+ * Znajduje najbliższy segment łamanej do podanego punktu.
+ * Używa projekcji w przybliżeniu płaskim (wystarczające dla małych dystansów).
+ */
 export function closestSegment(
   point: Coordinates,
   polyline: [number, number][]
@@ -72,6 +79,7 @@ export function closestSegment(
   return best;
 }
 
+/** Odległość punktu od łamanej (metry). */
 export function distanceToPolyline(
   point: Coordinates,
   polyline: [number, number][]
@@ -79,6 +87,7 @@ export function distanceToPolyline(
   return closestSegment(point, polyline).distance;
 }
 
+/** Pozostały dystans (metry) wzdłuż trasy od najbliższego punktu do końca. */
 export function remainingDistanceAlongRoute(
   point: Coordinates,
   polyline: [number, number][]
@@ -93,4 +102,46 @@ export function remainingDistanceAlongRoute(
   let remaining = seg(segmentIndex) * (1 - t);
   for (let i = segmentIndex + 1; i < polyline.length - 1; i++) remaining += seg(i);
   return remaining;
+}
+
+// ─── Dystans wzdłuż trasy (od startu) ─────────────────────────────
+/**
+ * Zwraca dystans w metrach od początku łamanej do punktu znajdującego się
+ * w segmencie `segmentIndex` pod parametrem `t`.
+ * Używane przy budowaniu gradientu natężenia ruchu.
+ */
+export function distanceAlongRouteTo(
+  polyline: [number, number][],
+  segmentIndex: number,
+  t: number
+): number {
+  if (polyline.length < 2) return 0;
+  const seg = (i: number) =>
+    distanceMeters(
+      { lng: polyline[i][0], lat: polyline[i][1] },
+      { lng: polyline[i + 1][0], lat: polyline[i + 1][1] }
+    );
+
+  let sum = 0;
+  const lastIdx = Math.min(segmentIndex, polyline.length - 2);
+  for (let i = 0; i < lastIdx; i++) sum += seg(i);
+
+  if (lastIdx >= 0 && lastIdx < polyline.length - 1) {
+    const clampedT = Math.max(0, Math.min(1, t));
+    sum += seg(lastIdx) * clampedT;
+  }
+  return sum;
+}
+
+/** Całkowita długość łamanej w metrach. */
+export function polylineLength(polyline: [number, number][]): number {
+  if (polyline.length < 2) return 0;
+  let sum = 0;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    sum += distanceMeters(
+      { lng: polyline[i][0], lat: polyline[i][1] },
+      { lng: polyline[i + 1][0], lat: polyline[i + 1][1] }
+    );
+  }
+  return sum;
 }
