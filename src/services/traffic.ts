@@ -12,7 +12,8 @@ export interface TrafficSample {
   freeFlowSpeed: number;
   confidence: number;
   roadClosure: boolean;
-  congestion: number; // 0= płynnie, 1= korek
+  /** 0 = płynnie, 1 = całkowity korek. */
+  congestion: number;
 }
 
 export interface TrafficReport {
@@ -31,11 +32,11 @@ export interface TrafficIncident {
   from?: string;
   to?: string;
   roadNumbers: string[];
-  delay: number;             // sekundy
-  length: number;            // metry
-  magnitudeOfDelay: number;  // 0..4
-  coordinates: Coordinates;  // reprezentatywny punkt
-  distanceFromStart: number;// metry od początku trasy
+  delay: number;
+  length: number;
+  magnitudeOfDelay: number;
+  coordinates: Coordinates;
+  distanceFromStart: number;
 }
 
 const ICON_BY_CATEGORY: Record<number, string> = {
@@ -124,9 +125,10 @@ async function fetchFlowPoint(
     if (!d) return null;
     const currentSpeed = Number(d.currentSpeed) || 0;
     const freeFlowSpeed = Number(d.freeFlowSpeed) || currentSpeed || 1;
-    const congestion = freeFlowSpeed > 0
-      ? Math.max(0, Math.min(1, 1 - currentSpeed / freeFlowSpeed))
-      : 0;
+    const congestion =
+      freeFlowSpeed > 0
+        ? Math.max(0, Math.min(1, 1 - currentSpeed / freeFlowSpeed))
+        : 0;
     return {
       coordinates: point,
       currentSpeed,
@@ -165,9 +167,15 @@ export async function fetchTrafficForRoute(
 
 // ─── Incident Details ─────────────────────────────────────────────
 /**
- * Pobiera zdarzenia z TomTom Incident Details API dla całej trasy.
- * Zwraca listę zdarzeń z przypisaną odległością od startu trasy.
+ * Pobiera zdarzenia z TomTom Incident Details API v5.
+ *
+ * Uwaga o bbox: TomTom ogranicza pole bbox do ~10000 km² na zapytanie.
+ * Bbox całej trasy Polska→Gdańsk ma ~64000 km², więc dzielimy go na
+ * siatkę GRID×GRID kawałków, wykonujemy zapytania równolegle, scalamy
+ * wyniki i deduplikujemy po `properties.id`.
  */
+const GRID = 4; // 4×4 = 16 kafelków
+
 export async function fetchIncidentsForRoute(
   route: Route,
   signal?: AbortSignal
@@ -184,32 +192,63 @@ export async function fetchIncidentsForRoute(
     if (lat > maxLat) maxLat = lat;
   }
   const pad = 0.005;
-  const bbox = `${minLng - pad},${minLat - pad},${maxLng + pad},${maxLat + pad}`;
+  minLng -= pad; minLat -= pad; maxLng += pad; maxLat += pad;
+
+  const spanLng = maxLng - minLng;
+  const spanLat = maxLat - minLat;
+  const stepLng = spanLng / GRID;
+  const stepLat = spanLat / GRID;
 
   const fields =
     '{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,delay,length,from,to,roadNumbers,events{description,iconCategory}}}}';
 
-  const url =
-    `https://api.tomtom.com/traffic/services/5/incidentDetails` +
-    `?key=${TOMTOM_KEY}` +
-    `&bbox=${bbox}` +
-    `&language=pl-PL` +
-    `&timeValidityFilter=present` +
-    `&fields=${encodeURIComponent(fields)}`;
+  // Budujemy listę bboxów
+  const bboxes: string[] = [];
+  for (let i = 0; i < GRID; i++) {
+    for (let j = 0; j < GRID; j++) {
+      const b = [
+        minLng + j * stepLng,
+        minLat + i * stepLat,
+        minLng + (j + 1) * stepLng,
+        minLat + (i + 1) * stepLat
+      ].join(',');
+      bboxes.push(b);
+    }
+  }
 
-  let data: any;
-  try {
-    const res = await fetch(url, { signal });
-    if (!res.ok) return [];
-    data = await res.json();
-  } catch {
-    return [];
+  // Wszystkie zapytania równolegle
+  const responses = await Promise.all(
+    bboxes.map(async (bbox) => {
+      const url =
+        `https://api.tomtom.com/traffic/services/5/incidentDetails` +
+        `?key=${TOMTOM_KEY}` +
+        `&bbox=${bbox}` +
+        `&language=pl-PL` +
+        `&timeValidityFilter=present` +
+        `&fields=${encodeURIComponent(fields)}`;
+      try {
+        const res = await fetch(url, { signal });
+        if (!res.ok) return [] as any[];
+        const data = (await res.json()) as any;
+        return Array.isArray(data?.incidents) ? data.incidents : [];
+      } catch {
+        return [] as any[];
+      }
+    })
+  );
+
+  // Deduplikacja po ID (zdarzenia na granicy kafelków pojawiają się 2×)
+  const seen = new Map<string, any>();
+  for (const list of responses) {
+    for (const inc of list) {
+      const id = String(inc?.properties?.id ?? '');
+      if (id && !seen.has(id)) seen.set(id, inc);
+    }
   }
 
   const incidents: TrafficIncident[] = [];
-  const arr = Array.isArray(data?.incidents) ? data.incidents : [];
 
-  for (const inc of arr) {
+  for (const inc of seen.values()) {
     try {
       const props = inc.properties ?? {};
       const category = Number(props.iconCategory) || 0;
@@ -217,6 +256,7 @@ export async function fetchIncidentsForRoute(
       const type = geom.type;
       const coords = geom.coordinates;
 
+      // Reprezentatywny punkt zdarzenia
       let repPoint: Coordinates | null = null;
       if (type === 'Point' && Array.isArray(coords) && coords.length >= 2) {
         repPoint = { lng: coords[0], lat: coords[1] };
@@ -226,8 +266,11 @@ export async function fetchIncidentsForRoute(
       }
       if (!repPoint) continue;
 
-      // odległość od startu trasy
+      // Rzut na trasę
       const proj = closestSegment(repPoint, route.geometry);
+      if (proj.distance > 300) continue;
+
+      // Dystans od startu trasy
       let along = 0;
       for (let i = 0; i < proj.segmentIndex; i++) {
         along += distanceMeters(
@@ -236,12 +279,12 @@ export async function fetchIncidentsForRoute(
         );
       }
       along += distanceMeters(
-        { lng: route.geometry[proj.segmentIndex][0], lat: route.geometry[proj.segmentIndex][1] },
+        {
+          lng: route.geometry[proj.segmentIndex][0],
+          lat: route.geometry[proj.segmentIndex][1]
+        },
         repPoint
       );
-
-      // pomijaj zdarzenia bardzo daleko od trasy (> 300 m)
-      if (proj.distance > 300) continue;
 
       const events: any[] = Array.isArray(props.events) ? props.events : [];
       const description =
@@ -266,7 +309,6 @@ export async function fetchIncidentsForRoute(
     }
   }
 
-  // sortuj wg odległości od startu
   incidents.sort((a, b) => a.distanceFromStart - b.distanceFromStart);
   return incidents;
 }
@@ -284,9 +326,9 @@ export function congestionLabel(c: number): string {
  * Zielony → żółty → pomarańczowy → czerwony.
  */
 export function congestionLineColor(c: number): string {
-  if (c < 0.15) return '#16a34a';       // zielony
-  if (c < 0.35) return '#facc15';       // żółty
-  if (c < 0.6) return '#f97316';        // pomarańczowy
-  if (c < 0.85) return '#dc2626';       // czerwony
-  return '#7f1d1d';                     // ciemny czerwony (korek)
+  if (c < 0.15) return '#16a34a';
+  if (c < 0.35) return '#facc15';
+  if (c < 0.6) return '#f97316';
+  if (c < 0.85) return '#dc2626';
+  return '#7f1d1d';
 }

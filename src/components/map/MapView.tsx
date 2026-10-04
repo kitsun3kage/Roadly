@@ -59,15 +59,13 @@ const NAV_PITCH = 60;
 const CAMERA_DURATION_MS = 900;
 const BEARING_DEAD_ZONE_DEG = 2;
 
+// Fallback dla trasy — jednolity kolor pomarańczowy (spójny z motywem UI).
 const FALLBACK_ROUTE_COLOR = '#ff6b00';
 const ROUTE_OUTLINE_COLOR = '#ffffff';
 const ROUTE_PROGRESS_COLOR = '#8e8e93';
 
 const ARROW_FILL = '#ff6b00';
 const ARROW_STROKE = '#ffffff';
-
-// Musi odpowiadać liczbie próbek w `samplePoints` z traffic.ts
-const FLOW_SAMPLE_COUNT = 10;
 
 const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,6 +102,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       'bottom-left'
     );
 
+    // Wyciszenie brakujących ikon w sprite
     map.on('styleimagemissing', (e) => {
       if (!map.hasImage(e.id)) {
         map.addImage(e.id, {
@@ -125,7 +124,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       }
     });
 
-    // ─── Popup po kliknięciu zdarzenia ─────────────────────────────
+    // Klik zdarzenia → popup
     map.on('click', 'roadly-incidents-symbol', (e) => {
       const f = e.features?.[0];
       if (!f) return;
@@ -232,7 +231,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     props.incidents
   ]);
 
-  // ─── Zmiana stylu ─────────────────────────────────────────────────
+  // ─── Zmiana stylu (pomijamy pierwszy render) ─────────────────────
   useEffect(() => {
     if (firstStyleRenderRef.current) {
       firstStyleRenderRef.current = false;
@@ -262,7 +261,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.navigationMode]);
 
-  // ─── Markery (bez zmian) ──────────────────────────────────────────
+  // ─── Marker wybranego miejsca ─────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -271,11 +270,14 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     if (!props.selectedPlace) return;
     const el = document.createElement('div');
     el.className = 'roadly-marker';
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', props.selectedPlace.name);
     placeMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([props.selectedPlace.coordinates.lng, props.selectedPlace.coordinates.lat])
       .addTo(map);
   }, [props.selectedPlace]);
 
+  // ─── Marker startu ────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -289,6 +291,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.fromMarker]);
 
+  // ─── Marker celu ──────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -302,6 +305,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.toMarker]);
 
+  // ─── Marker użytkownika (strzałka SVG) ────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -359,6 +363,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userLocation, props.userAccuracy, props.userHeading]);
 
+  // ─── Obrót markera wg heading ─────────────────────────────────────
   useEffect(() => {
     const marker = userMarkerRef.current;
     if (!marker) return;
@@ -370,7 +375,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userHeading]);
 
-  // ─── Kamera w nawigacji ───────────────────────────────────────────
+  // ─── Kamera w trybie nawigacji ────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -400,6 +405,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     });
   }, [props.userLocation, props.userHeading, props.followUser, props.navigationMode]);
 
+  // ─── Follow user poza nawigacją ───────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -412,7 +418,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     });
   }, [props.userLocation, props.followUser, props.navigationMode]);
 
-  // ─── Zapamiętane miejsca ──────────────────────────────────────────
+  // ─── Markery zapisanych miejsc ────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -515,7 +521,7 @@ function computeProgressLine(route: Route, user: Coordinates): [number, number][
 }
 
 function ensureLayers(map: MLMap) {
-  // ─── Alt trasy (szare) ─────────────────────────────────────────
+  // Alt trasy (szare)
   if (!map.getSource(ALT_SOURCE)) {
     map.addSource(ALT_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -529,7 +535,7 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // ─── Trasa główna (outline + gradient) ─────────────────────────
+  // Trasa główna (outline + gradient)
   if (!map.getSource(ROUTE_SOURCE)) {
     map.addSource(ROUTE_SOURCE, {
       type: 'geojson',
@@ -563,7 +569,7 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // ─── Szara linia pokonanego odcinka ────────────────────────────
+  // Szara linia pokonanego odcinka
   if (!map.getSource(PROGRESS_SOURCE)) {
     map.addSource(PROGRESS_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -577,7 +583,7 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // ─── Zdarzenia (punkty) ────────────────────────────────────────
+  // Zdarzenia (punkty)
   if (!map.getSource(INCIDENT_SOURCE)) {
     map.addSource(INCIDENT_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -653,8 +659,8 @@ function applyRouteData(map: MLMap, primary: Route | null, alternatives: Route[]
 
 /**
  * Ustawia gradient koloru trasy wg natężenia ruchu.
- * Używa `line-gradient` z interpolacją po `line-progress`.
- * Gdy brak danych ruchu → jednolity pomarańczowy (FALLBACK_ROUTE_COLOR).
+ * Gdy brak danych — gradient z jednym kolorem (NIGDY null, żeby MapLibre
+ * nie spamował "Expected value to be of type number, but found null instead").
  */
 function applyRouteGradient(
   map: MLMap,
@@ -663,19 +669,29 @@ function applyRouteGradient(
 ) {
   if (!map.getLayer('roadly-route-gradient-line')) return;
 
+  // ─── Fallback: jednolity kolor jako gradient 0→1 ────────────────
   if (!route || route.geometry.length < 2 || !traffic || traffic.samples.length < 2) {
-    // Fallback: jednolity kolor
-    map.setPaintProperty('roadly-route-gradient-line', 'line-gradient', null as never);
-    map.setPaintProperty('roadly-route-gradient-line', 'line-color', FALLBACK_ROUTE_COLOR);
+    const flatGradient: any = [
+      'interpolate',
+      ['linear'],
+      ['line-progress'],
+      0,
+      FALLBACK_ROUTE_COLOR,
+      1,
+      FALLBACK_ROUTE_COLOR
+    ];
+    try {
+      map.setPaintProperty('roadly-route-gradient-line', 'line-gradient', flatGradient);
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
-  // Budujemy stops dla `line-gradient`.
-  // Każda próbka ma przypisany ułamek progressu 0..1 wzdłuż całej trasy.
   const total = polylineLength(route.geometry) || 1;
   const samples = traffic.samples;
 
-  // Dla każdej próbki: znajdź najbliższy segment i oblicz dystans od startu
+  // Każda próbka → ułamek progressu wzdłuż trasy + kolor wg congestion
   const points = samples.map((s) => {
     const proj = closestSegment(s.coordinates, route.geometry);
     const dist = distanceAlongRouteTo(route.geometry, proj.segmentIndex, proj.t);
@@ -687,7 +703,7 @@ function applyRouteGradient(
 
   points.sort((a, b) => a.progress - b.progress);
 
-  // Zapewnij że mamy punkty na 0 i 1 (zgranie z krańcami)
+  // Zapewnij że mamy punkty na 0 i 1
   if (points[0].progress > 0.001) {
     points.unshift({ progress: 0, color: points[0].color });
   }
@@ -695,13 +711,15 @@ function applyRouteGradient(
     points.push({ progress: 1, color: points[points.length - 1].color });
   }
 
-  // Ogranicz do ~20 stopów (MapLibre ma limit na interpolację)
+  // Ogranicz do ~20 stopów (MapLibre ma limit interpolacji)
   const maxStops = 20;
   let stops = points;
   if (points.length > maxStops) {
     const step = Math.ceil(points.length / maxStops);
     stops = points.filter((_, i) => i % step === 0);
-    if (stops[stops.length - 1].progress < 0.999) stops.push(points[points.length - 1]);
+    if (stops[stops.length - 1].progress < 0.999) {
+      stops.push(points[points.length - 1]);
+    }
   }
 
   const gradient: any[] = ['interpolate', ['linear'], ['line-progress']];
@@ -710,7 +728,6 @@ function applyRouteGradient(
   }
 
   try {
-    map.setPaintProperty('roadly-route-gradient-line', 'line-color', FALLBACK_ROUTE_COLOR);
     map.setPaintProperty('roadly-route-gradient-line', 'line-gradient', gradient);
   } catch {
     /* ignore */
@@ -771,7 +788,10 @@ function applyIncidentsData(map: MLMap, incidents: TrafficIncident[]) {
         color: incidentColor(inc.category),
         icon: incidentIcon(inc.category)
       },
-      geometry: { type: 'Point' as const, coordinates: [inc.coordinates.lng, inc.coordinates.lat] }
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [inc.coordinates.lng, inc.coordinates.lat]
+      }
     }))
   });
 }
