@@ -9,6 +9,7 @@ import {
 } from '../../services/maps';
 import {
   bearingDelta,
+  closestPointOnPolyline,
   closestSegment,
   distanceAlongRouteTo,
   polylineLength
@@ -59,7 +60,6 @@ const NAV_PITCH = 60;
 const CAMERA_DURATION_MS = 900;
 const BEARING_DEAD_ZONE_DEG = 2;
 
-// Fallback dla trasy — jednolity kolor pomarańczowy (spójny z motywem UI).
 const FALLBACK_ROUTE_COLOR = '#ff6b00';
 const ROUTE_OUTLINE_COLOR = '#ffffff';
 const ROUTE_PROGRESS_COLOR = '#8e8e93';
@@ -102,7 +102,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       'bottom-left'
     );
 
-    // Wyciszenie brakujących ikon w sprite
     map.on('styleimagemissing', (e) => {
       if (!map.hasImage(e.id)) {
         map.addImage(e.id, {
@@ -124,7 +123,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       }
     });
 
-    // Klik zdarzenia → popup
+    // Klik w zdarzenie → popup
     map.on('click', 'roadly-incidents-symbol', (e) => {
       const f = e.features?.[0];
       if (!f) return;
@@ -209,7 +208,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
         props.route ?? null,
         props.userLocation ?? null
       );
-      applyIncidentsData(map, props.incidents ?? []);
+      applyIncidentsData(map, props.incidents ?? [], props.route ?? null);
     };
 
     if (map.isStyleLoaded()) apply();
@@ -231,7 +230,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     props.incidents
   ]);
 
-  // ─── Zmiana stylu (pomijamy pierwszy render) ─────────────────────
+  // ─── Zmiana stylu ─────────────────────────────────────────────────
   useEffect(() => {
     if (firstStyleRenderRef.current) {
       firstStyleRenderRef.current = false;
@@ -270,8 +269,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     if (!props.selectedPlace) return;
     const el = document.createElement('div');
     el.className = 'roadly-marker';
-    el.setAttribute('role', 'img');
-    el.setAttribute('aria-label', props.selectedPlace.name);
     placeMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([props.selectedPlace.coordinates.lng, props.selectedPlace.coordinates.lat])
       .addTo(map);
@@ -305,7 +302,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.toMarker]);
 
-  // ─── Marker użytkownika (strzałka SVG) ────────────────────────────
+  // ─── Marker użytkownika ───────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -318,8 +315,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
 
     const el = document.createElement('div');
     el.className = 'roadly-location';
-    el.setAttribute('role', 'img');
-    el.setAttribute('aria-label', 'Twoja lokalizacja');
 
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -363,7 +358,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userLocation, props.userAccuracy, props.userHeading]);
 
-  // ─── Obrót markera wg heading ─────────────────────────────────────
   useEffect(() => {
     const marker = userMarkerRef.current;
     if (!marker) return;
@@ -375,7 +369,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userHeading]);
 
-  // ─── Kamera w trybie nawigacji ────────────────────────────────────
+  // ─── Kamera w nawigacji ───────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -405,7 +399,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     });
   }, [props.userLocation, props.userHeading, props.followUser, props.navigationMode]);
 
-  // ─── Follow user poza nawigacją ───────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -418,7 +411,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     });
   }, [props.userLocation, props.followUser, props.navigationMode]);
 
-  // ─── Markery zapisanych miejsc ────────────────────────────────────
+  // ─── Zapisane miejsca ─────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -521,7 +514,7 @@ function computeProgressLine(route: Route, user: Coordinates): [number, number][
 }
 
 function ensureLayers(map: MLMap) {
-  // Alt trasy (szare)
+  // Alt trasy
   if (!map.getSource(ALT_SOURCE)) {
     map.addSource(ALT_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -535,12 +528,12 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // Trasa główna (outline + gradient)
+  // Trasa główna
   if (!map.getSource(ROUTE_SOURCE)) {
     map.addSource(ROUTE_SOURCE, {
       type: 'geojson',
       data: emptyFC(),
-      lineMetrics: true // KLUCZOWE dla line-gradient
+      lineMetrics: true
     });
   }
   if (!map.getLayer('roadly-route-outline')) {
@@ -569,7 +562,7 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // Szara linia pokonanego odcinka
+  // Szary pokonany odcinek
   if (!map.getSource(PROGRESS_SOURCE)) {
     map.addSource(PROGRESS_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -583,35 +576,38 @@ function ensureLayers(map: MLMap) {
     });
   }
 
-  // Zdarzenia (punkty)
+  // ─── Zdarzenia (na samej górze, zawsze widoczne) ─────────────────
   if (!map.getSource(INCIDENT_SOURCE)) {
     map.addSource(INCIDENT_SOURCE, { type: 'geojson', data: emptyFC() });
   }
+  // Duże halo (poświata)
   if (!map.getLayer('roadly-incidents-halo')) {
     map.addLayer({
       id: 'roadly-incidents-halo',
       type: 'circle',
       source: INCIDENT_SOURCE,
       paint: {
-        'circle-radius': 16,
+        'circle-radius': 22,
         'circle-color': ['get', 'color'],
-        'circle-opacity': 0.18
+        'circle-opacity': 0.25
       }
     });
   }
+  // Główny znacznik (kolorowe kółko z białą obwódką)
   if (!map.getLayer('roadly-incidents-symbol')) {
     map.addLayer({
       id: 'roadly-incidents-symbol',
       type: 'circle',
       source: INCIDENT_SOURCE,
       paint: {
-        'circle-radius': 12,
+        'circle-radius': 15,
         'circle-color': ['get', 'color'],
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2
+        'circle-stroke-width': 3
       }
     });
   }
+  // Ikona emoji w środku
   if (!map.getLayer('roadly-incidents-text')) {
     map.addLayer({
       id: 'roadly-incidents-text',
@@ -619,8 +615,9 @@ function ensureLayers(map: MLMap) {
       source: INCIDENT_SOURCE,
       layout: {
         'text-field': ['get', 'icon'],
-        'text-size': 13,
-        'text-allow-overlap': true
+        'text-size': 16,
+        'text-allow-overlap': true,
+        'text-ignore-placement': true
       }
     });
   }
@@ -657,11 +654,6 @@ function applyRouteData(map: MLMap, primary: Route | null, alternatives: Route[]
   });
 }
 
-/**
- * Ustawia gradient koloru trasy wg natężenia ruchu.
- * Gdy brak danych — gradient z jednym kolorem (NIGDY null, żeby MapLibre
- * nie spamował "Expected value to be of type number, but found null instead").
- */
 function applyRouteGradient(
   map: MLMap,
   route: Route | null,
@@ -669,7 +661,7 @@ function applyRouteGradient(
 ) {
   if (!map.getLayer('roadly-route-gradient-line')) return;
 
-  // ─── Fallback: jednolity kolor jako gradient 0→1 ────────────────
+  // Fallback: gradient 0→1 z jednym kolorem (NIGDY null!)
   if (!route || route.geometry.length < 2 || !traffic || traffic.samples.length < 2) {
     const flatGradient: any = [
       'interpolate',
@@ -691,7 +683,6 @@ function applyRouteGradient(
   const total = polylineLength(route.geometry) || 1;
   const samples = traffic.samples;
 
-  // Każda próbka → ułamek progressu wzdłuż trasy + kolor wg congestion
   const points = samples.map((s) => {
     const proj = closestSegment(s.coordinates, route.geometry);
     const dist = distanceAlongRouteTo(route.geometry, proj.segmentIndex, proj.t);
@@ -703,7 +694,6 @@ function applyRouteGradient(
 
   points.sort((a, b) => a.progress - b.progress);
 
-  // Zapewnij że mamy punkty na 0 i 1
   if (points[0].progress > 0.001) {
     points.unshift({ progress: 0, color: points[0].color });
   }
@@ -711,7 +701,6 @@ function applyRouteGradient(
     points.push({ progress: 1, color: points[points.length - 1].color });
   }
 
-  // Ogranicz do ~20 stopów (MapLibre ma limit interpolacji)
   const maxStops = 20;
   let stops = points;
   if (points.length > maxStops) {
@@ -766,7 +755,16 @@ function applyProgressData(
   });
 }
 
-function applyIncidentsData(map: MLMap, incidents: TrafficIncident[]) {
+/**
+ * Rysuje zdarzenia z TomTom. Współrzędne są "przyciągane" do najbliższego
+ * punktu na trasie — dzięki temu markery leżą dokładnie NA drodze, a nie
+ * obok (TomTom czasem zwraca pozycje z pobocza/budynków).
+ */
+function applyIncidentsData(
+  map: MLMap,
+  incidents: TrafficIncident[],
+  route: Route | null
+) {
   const src = map.getSource(INCIDENT_SOURCE) as maplibregl.GeoJSONSource | undefined;
   if (!src) return;
 
@@ -775,25 +773,37 @@ function applyIncidentsData(map: MLMap, incidents: TrafficIncident[]) {
     return;
   }
 
-  src.setData({
-    type: 'FeatureCollection',
-    features: incidents.map((inc) => ({
-      type: 'Feature' as const,
-      properties: {
-        id: inc.id,
-        category: inc.category,
-        description: inc.description,
-        delay: inc.delay,
-        roads: inc.roadNumbers.join(' / '),
-        color: incidentColor(inc.category),
-        icon: incidentIcon(inc.category)
-      },
-      geometry: {
-        type: 'Point' as const,
-        coordinates: [inc.coordinates.lng, inc.coordinates.lat]
+  const features = incidents
+    .map((inc) => {
+      // Walidacja współrzędnych
+      if (!isFinite(inc.coordinates.lng) || !isFinite(inc.coordinates.lat)) {
+        return null;
       }
-    }))
-  });
+
+      // Snapping do trasy — incydent ląduje dokładnie na drodze
+      let coords: [number, number] = [inc.coordinates.lng, inc.coordinates.lat];
+      if (route && route.geometry.length >= 2) {
+        const snapped = closestPointOnPolyline(inc.coordinates, route.geometry);
+        coords = [snapped.lng, snapped.lat];
+      }
+
+      return {
+        type: 'Feature' as const,
+        properties: {
+          id: inc.id,
+          category: inc.category,
+          description: inc.description,
+          delay: inc.delay,
+          roads: inc.roadNumbers.join(' / '),
+          color: incidentColor(inc.category),
+          icon: incidentIcon(inc.category)
+        },
+        geometry: { type: 'Point' as const, coordinates: coords }
+      };
+    })
+    .filter((f): f is GeoJSON.Feature => f !== null);
+
+  src.setData({ type: 'FeatureCollection', features });
 }
 
 export default MapView;

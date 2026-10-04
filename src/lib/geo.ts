@@ -43,7 +43,7 @@ export interface SegmentProjection {
 
 /**
  * Znajduje najbliższy segment łamanej do podanego punktu.
- * Używa projekcji w przybliżeniu płaskim (wystarczające dla małych dystansów).
+ * Rzut w przybliżeniu płaskim — wystarczające dla małych dystansów.
  */
 export function closestSegment(
   point: Coordinates,
@@ -79,6 +79,26 @@ export function closestSegment(
   return best;
 }
 
+/**
+ * Zwraca najbliższy punkt na łamanej do podanego punktu.
+ * Używane do "przyciągania" incydentów do trasy (żeby leżały na drodze,
+ * a nie na poboczu / budynkach).
+ */
+export function closestPointOnPolyline(
+  point: Coordinates,
+  polyline: [number, number][]
+): Coordinates {
+  if (polyline.length < 2) return point;
+  const proj = closestSegment(point, polyline);
+  const idx = Math.min(proj.segmentIndex, polyline.length - 2);
+  const [x1, y1] = polyline[idx];
+  const [x2, y2] = polyline[idx + 1];
+  return {
+    lng: x1 + (x2 - x1) * proj.t,
+    lat: y1 + (y2 - y1) * proj.t
+  };
+}
+
 /** Odległość punktu od łamanej (metry). */
 export function distanceToPolyline(
   point: Coordinates,
@@ -108,7 +128,8 @@ export function remainingDistanceAlongRoute(
 /**
  * Zwraca dystans w metrach od początku łamanej do punktu znajdującego się
  * w segmencie `segmentIndex` pod parametrem `t`.
- * Używane przy budowaniu gradientu natężenia ruchu.
+ * Używane przy budowaniu gradientu natężenia ruchu oraz do sortowania
+ * incydentów po pozycji na trasie.
  */
 export function distanceAlongRouteTo(
   polyline: [number, number][],
