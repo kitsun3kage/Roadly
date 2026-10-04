@@ -1,20 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
+import { bearingDelta } from '../lib/geo';
 
 /**
- * Zwraca kierunek patrzenia urządzenia w stopniach (0 = północ) lub null.
+ * Kompas urządzenia (0 = północ) lub null.
  *
- * iOS Safari wymaga zgody użytkownika (DeviceOrientationEvent.requestPermission)
- * i udostępnia dokładny heading przez `webkitCompassHeading`.
- * Android Chrome udostępnia `alpha` (0–360°, przeciwnie do wskazówek zegara),
- * więc przeliczamy go na heading kompasowy.
+ * - iOS Safari: `webkitCompassHeading` (dokładny, wymaga zgody przez requestPermission).
+ * - Android Chrome: `alpha` (0–360°, przeciwnie do wskazówek zegara) → przeliczamy.
+ *
+ * Wartości są wygładzane wykładniczo (filtr EMA), żeby strzałka nie drgała.
+ * Aktualizacje ograniczone do ~10 Hz (wystarczy dla płynności, nie zabija CPU).
  */
 export function useDeviceHeading(enabled: boolean) {
   const [heading, setHeading] = useState<number | null>(null);
   const listenerRef = useRef<((e: DeviceOrientationEvent) => void) | null>(null);
+  const smoothedRef = useRef<number | null>(null);
+  const lastEmitRef = useRef(0);
 
   useEffect(() => {
     if (!enabled) {
       setHeading(null);
+      smoothedRef.current = null;
       return;
     }
     if (typeof window === 'undefined') return;
@@ -24,24 +29,31 @@ export function useDeviceHeading(enabled: boolean) {
     const handler = (e: DeviceOrientationEvent) => {
       const anyE = e as DeviceOrientationEvent & {
         webkitCompassHeading?: number;
-        webkitCompassAccuracy?: number;
       };
 
-      // iOS: dokładny heading kompasowy
+      let raw: number | null = null;
       if (
         typeof anyE.webkitCompassHeading === 'number' &&
         !Number.isNaN(anyE.webkitCompassHeading)
       ) {
-        setHeading(anyE.webkitCompassHeading);
-        return;
+        raw = anyE.webkitCompassHeading;
+      } else if (typeof e.alpha === 'number' && !Number.isNaN(e.alpha)) {
+        raw = (360 - e.alpha) % 360;
       }
+      if (raw == null) return;
 
-      // Android: alpha w zakresie [0, 360), gdzie 0 = północ
-      // (standard mówi: alpha = 360 - compassHeading)
-      if (typeof e.alpha === 'number' && !Number.isNaN(e.alpha)) {
-        const h = (360 - e.alpha) % 360;
-        setHeading(h);
-      }
+      // Filtr EMA: nowe = stare + delta * alpha
+      const prev = smoothedRef.current;
+      const ALPHA = 0.2;
+      const next =
+        prev == null ? raw : prev + bearingDelta(prev, raw) * ALPHA;
+      smoothedRef.current = next;
+
+      // Throttle emisji do ~10 Hz
+      const now = performance.now();
+      if (now - lastEmitRef.current < 100) return;
+      lastEmitRef.current = now;
+      setHeading(next);
     };
 
     listenerRef.current = handler;
@@ -51,7 +63,6 @@ export function useDeviceHeading(enabled: boolean) {
       window.addEventListener('deviceorientation', handler as EventListener);
     };
 
-    // iOS 13+ wymaga requestPermission w geście użytkownika
     const anyDOE = window.DeviceOrientationEvent as
       | (typeof DeviceOrientationEvent & {
           requestPermission?: () => Promise<'granted' | 'denied'>;
@@ -80,6 +91,7 @@ export function useDeviceHeading(enabled: boolean) {
         window.removeEventListener('deviceorientation', h as EventListener);
       }
       listenerRef.current = null;
+      smoothedRef.current = null;
     };
   }, [enabled]);
 

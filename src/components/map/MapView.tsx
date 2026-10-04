@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import maplibregl, { LngLatBounds, type Map as MLMap } from 'maplibre-gl';
 import type { Coordinates, Place, Route } from '../../types';
 import { DEFAULT_CENTER, DEFAULT_ZOOM, FALLBACK_STYLE, MAP_STYLES } from '../../services/maps';
+import { bearingDelta } from '../../lib/geo';
 
 export interface MapViewHandle {
   flyTo: (coord: Coordinates, zoom?: number) => void;
@@ -33,6 +34,8 @@ const ALT_SOURCE = 'roadly-alt-route';
 
 const NAV_ZOOM = 17;
 const NAV_PITCH = 60;
+const CAMERA_DURATION_MS = 900; // dopasowane do 1 Hz update GPS
+const BEARING_DEAD_ZONE_DEG = 2; // ignoruj mikro-zmiany heading
 
 const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -62,15 +65,13 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
 
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left');
 
-    // ─── Wyciszenie ostrzeżeń o brakujących ikonach w sprite'cie ────
-    // Style OpenFreeMap mogą odwoływać się do ikon, których nie ma w sprite.
-    // Wstawiamy przezroczysty placeholder 1×1 px, żeby MapLibre nie logował błędów.
+    // Wyciszenie brakujących ikon w sprite
     map.on('styleimagemissing', (e) => {
       if (!map.hasImage(e.id)) {
         map.addImage(e.id, {
           width: 1,
           height: 1,
-          data: new Uint8Array(4) // RGBA = 0,0,0,0 → w pełni przezroczysty
+          data: new Uint8Array(4)
         });
       }
     });
@@ -105,7 +106,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Zmiana stylu ─────────────────────────────────────────────────
+  // ─── Styl ─────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -124,10 +125,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     if (!map) return;
     if (props.navigationMode) {
       map.stop();
-      map.jumpTo({
-        pitch: NAV_PITCH,
-        zoom: NAV_ZOOM
-      });
+      map.jumpTo({ pitch: NAV_PITCH, zoom: NAV_ZOOM });
     } else {
       map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
     }
@@ -177,7 +175,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .addTo(map);
   }, [props.toMarker]);
 
-  // ─── Marker użytkownika (strzałka + obrót) ───────────────────────
+  // ─── Marker użytkownika (strzałka SVG) ────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -193,11 +191,25 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     el.setAttribute('role', 'img');
     el.setAttribute('aria-label', 'Twoja lokalizacja');
 
-    const arrow = document.createElement('div');
-    arrow.className = 'roadly-location__arrow';
-    el.appendChild(arrow);
+    // Strzałka SVG z białą obwódką (nie zlewa się z drogą)
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 40 40');
+    svg.setAttribute('width', '40');
+    svg.setAttribute('height', '40');
+    svg.setAttribute('class', 'roadly-location__svg');
+    const path = document.createElementNS(SVG_NS, 'path');
+    // Klasyczny kształt strzałki nawigacyjnej (chevron)
+    path.setAttribute('d', 'M20 4 L34 34 L20 27 L6 34 Z');
+    path.setAttribute('fill', '#0a84ff');
+    path.setAttribute('stroke', '#ffffff');
+    path.setAttribute('stroke-width', '2.5');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(path);
+    el.appendChild(svg);
 
-    userMarkerRef.current = new maplibregl.Marker({
+    const marker = new maplibregl.Marker({
       element: el,
       anchor: 'center',
       rotationAlignment: 'map',
@@ -206,10 +218,10 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       .setLngLat([props.userLocation.lng, props.userLocation.lat])
       .addTo(map);
 
-    // Ustaw obrót od razu, jeśli mamy heading (żeby uniknąć migotania)
     if (props.userHeading != null && !Number.isNaN(props.userHeading)) {
-      userMarkerRef.current.setRotation(props.userHeading);
+      marker.setRotation(props.userHeading);
     }
+    userMarkerRef.current = marker;
 
     if (props.userAccuracy && props.userAccuracy > 5) {
       const accEl = document.createElement('div');
@@ -221,20 +233,9 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
         .setLngLat([props.userLocation.lng, props.userLocation.lat])
         .addTo(map);
     }
+  }, [props.userLocation, props.userAccuracy, props.userHeading]);
 
-    if (props.followUser) {
-      if (props.navigationMode) {
-        map.setCenter([props.userLocation.lng, props.userLocation.lat]);
-      } else {
-        map.easeTo({
-          center: [props.userLocation.lng, props.userLocation.lat],
-          duration: 600
-        });
-      }
-    }
-  }, [props.userLocation, props.userAccuracy, props.followUser, props.navigationMode, props.userHeading]);
-
-  // ─── Obrót markera użytkownika wg heading ────────────────────────
+  // ─── Obrót markera wg heading ─────────────────────────────────────
   useEffect(() => {
     const marker = userMarkerRef.current;
     if (!marker) return;
@@ -246,23 +247,56 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userHeading]);
 
-  // ─── Obrót kamery wg heading (tylko w nawigacji) ─────────────────
+  // ─── Kamera w trybie nawigacji (JEDEN easeTo, linear easing) ─────
+  // Zamiast osobnych setCenter / easeTo(bearing) — łączymy wszystko w jedną
+  // animację, żeby nie anulowały się nawzajem. Linear easing + czas ~= okres
+  // GPS (1 Hz) daje płynny ruch bez "przeskoków" między aktualizacjami.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     if (!props.navigationMode) return;
-    if (props.userHeading == null || Number.isNaN(props.userHeading)) return;
+    if (!props.followUser) return;
+    if (!props.userLocation) return;
 
-    try {
-      map.easeTo({
-        bearing: props.userHeading,
-        duration: 600,
-        easing: (t) => t * (2 - t)
-      });
-    } catch {
-      /* ignore */
+    const center: [number, number] = [props.userLocation.lng, props.userLocation.lat];
+    const currentBearing = map.getBearing();
+
+    let targetBearing = currentBearing;
+    if (props.userHeading != null && !Number.isNaN(props.userHeading)) {
+      const delta = bearingDelta(currentBearing, props.userHeading);
+      if (Math.abs(delta) > BEARING_DEAD_ZONE_DEG) {
+        targetBearing = currentBearing + delta; // zawsze krótszą drogą
+      }
     }
-  }, [props.userHeading, props.navigationMode]);
+
+    map.easeTo({
+      center,
+      bearing: targetBearing,
+      pitch: NAV_PITCH,
+      zoom: NAV_ZOOM,
+      duration: CAMERA_DURATION_MS,
+      easing: (t) => t, // linear → brak przestojów między update'ami
+      essential: true
+    });
+  }, [
+    props.userLocation,
+    props.userHeading,
+    props.followUser,
+    props.navigationMode
+  ]);
+
+  // ─── Follow user poza nawigacją (miękka animacja) ────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (props.navigationMode) return;
+    if (!props.followUser) return;
+    if (!props.userLocation) return;
+    map.easeTo({
+      center: [props.userLocation.lng, props.userLocation.lat],
+      duration: 600
+    });
+  }, [props.userLocation, props.followUser, props.navigationMode]);
 
   // ─── Markery zapisanych miejsc ────────────────────────────────────
   useEffect(() => {
@@ -326,18 +360,11 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       set3D(enabled) {
         const map = mapRef.current;
         if (!map) return;
-        if (props.navigationMode) {
-          map.jumpTo({
-            pitch: enabled ? NAV_PITCH : 0,
-            bearing: enabled ? map.getBearing() : 0
-          });
-        } else {
-          map.easeTo({
-            pitch: enabled ? NAV_PITCH : 0,
-            bearing: enabled ? map.getBearing() : 0,
-            duration: 700
-          });
-        }
+        map.easeTo({
+          pitch: enabled ? NAV_PITCH : 0,
+          bearing: enabled ? map.getBearing() : 0,
+          duration: 700
+        });
       },
       is3D() {
         const map = mapRef.current;

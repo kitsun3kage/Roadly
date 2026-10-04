@@ -1036,3 +1036,141 @@ h4 {
   border: none;
   box-shadow: none;
 }
+
+/* ─── Marker użytkownika: strzałka SVG ─────────────────────────── */
+.roadly-location {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.roadly-location__svg {
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.35));
+  will-change: transform;
+}
+
+.roadly-location-accuracy {
+  border-radius: 50%;
+  background: rgba(10, 132, 255, 0.15);
+  border: 1px solid rgba(10, 132, 255, 0.4);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* ─── Mniejsze chipsy wariantów trasy i profilu ─────────────────── */
+.route-alt__chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.route-alt {
+  gap: 6px;
+}
+
+/* ─── Ekran "Jesteś u celu" ──────────────────────────────────────── */
+.nav-arrived {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 40;
+  background: var(--bg-panel);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 32px));
+  text-align: center;
+  animation: nav-arrived-in 380ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+@keyframes nav-arrived-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.nav-arrived__icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #34c759;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 6px 20px rgba(52, 199, 89, 0.35);
+}
+
+.nav-arrived__title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.nav-arrived__sub {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: -6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-arrived .btn {
+  margin-top: 4px;
+  min-width: 180px;
+}
+
+/* ─── Plakietka natężenia ruchu w karcie postępu ─────────────────── */
+.nav-stat--traffic {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-left: 1px solid var(--border);
+  height: 36px;
+}
+
+.nav-traffic__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+}
+
+.nav-stat__label--inline {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Baner nawigacji — dodatkowy przycisk obok X */
+.nav-banner__body {
+  flex: 1;
+}

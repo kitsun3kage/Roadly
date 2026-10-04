@@ -1,7 +1,21 @@
-import { useEffect, useState } from 'react';
-import { Locate, Navigation as NavIcon, X } from 'lucide-react';
-import type { Coordinates, Route } from '../../types';
+import { useMemo, useState } from 'react';
+import {
+  CheckCircle2,
+  Locate,
+  Navigation as NavIcon,
+  Volume2,
+  VolumeX,
+  X
+} from 'lucide-react';
+import type { Coordinates, Route, RouteStep } from '../../types';
 import { formatDistance, formatDuration, formatETA } from '../../lib/utils';
+import {
+  closestSegment,
+  distanceMeters,
+  remainingDistanceAlongRoute
+} from '../../lib/geo';
+import { useVoiceGuidance } from '../../hooks/useVoiceGuidance';
+import { congestionColor, congestionLabel, type TrafficReport } from '../../services/traffic';
 
 interface Props {
   route: Route;
@@ -11,91 +25,73 @@ interface Props {
   geoError: string | null;
   is3D: boolean;
   onToggle3D: () => void;
+  hasArrived: boolean;
+  destinationName: string | null;
+  traffic: TrafficReport | null;
+  voiceEnabled: boolean;
+  onToggleVoice: () => void;
 }
 
-interface Progress {
-  remainingDistance: number;
-  remainingDuration: number;
-  nextStepIndex: number;
-  distanceToRoute: number;
+interface NavState {
+  step: RouteStep | null;
+  stepIndex: number;
+  distanceToManeuver: number;
+  remainingM: number;
+  remainingS: number;
 }
 
-function haversine(a: [number, number], b: [number, number]): number {
-  const R = 6371000;
-  const toRad = (v: number) => (v * Math.PI) / 180;
-  const dLat = toRad(b[1] - a[1]);
-  const dLon = toRad(b[0] - a[0]);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s));
-}
-
-function computeProgress(route: Route, user: Coordinates): Progress {
-  const coords = route.geometry;
-  if (coords.length < 2) {
+function computeNavState(route: Route, user: Coordinates | null): NavState {
+  if (!user || route.geometry.length < 2) {
+    const first = route.steps[0] ?? null;
     return {
-      remainingDistance: route.distance,
-      remainingDuration: route.duration,
-      nextStepIndex: 0,
-      distanceToRoute: Infinity
+      step: first,
+      stepIndex: 0,
+      distanceToManeuver: first?.distance ?? 0,
+      remainingM: route.distance,
+      remainingS: route.duration
     };
   }
 
-  let best = { idx: 0, t: 0, dist: Infinity };
-  for (let i = 0; i < coords.length - 1; i++) {
-    const [x1, y1] = coords[i];
-    const [x2, y2] = coords[i + 1];
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len2 = dx * dx + dy * dy;
-    let t = 0;
-    if (len2 > 0) {
-      t = ((user.lng - x1) * dx + (user.lat - y1) * dy) / len2;
-      t = Math.max(0, Math.min(1, t));
-    }
-    const px = x1 + t * dx;
-    const py = y1 + t * dy;
-    const d = Math.hypot(user.lng - px, user.lat - py);
-    if (d < best.dist) best = { idx: i, t, dist: d };
-  }
+  const userProj = closestSegment(user, route.geometry);
 
-  const startPt: [number, number] = [
-    coords[best.idx][0] + best.t * (coords[best.idx + 1][0] - coords[best.idx][0]),
-    coords[best.idx][1] + best.t * (coords[best.idx + 1][1] - coords[best.idx][1])
-  ];
-  let remaining = haversine(startPt, coords[best.idx + 1]);
-  for (let i = best.idx + 1; i < coords.length - 1; i++) {
-    remaining += haversine(coords[i], coords[i + 1]);
-  }
+  let step: RouteStep | null = null;
+  let stepIndex = route.steps.length - 1;
+  let bestDist = Infinity;
 
-  let nextStepIndex = route.steps.length - 1;
-  for (let i = 0; i < route.steps.length; i++) {
-    const loc = route.steps[i].maneuver.location;
-    let closestIdx = 0;
-    let closestDist = Infinity;
-    for (let j = 0; j < coords.length; j++) {
-      const d = Math.hypot(coords[j][0] - loc.lng, coords[j][1] - loc.lat);
-      if (d < closestDist) {
-        closestDist = d;
-        closestIdx = j;
-      }
-    }
-    if (closestIdx > best.idx) {
-      nextStepIndex = i;
-      break;
+  for (let i = 1; i < route.steps.length; i++) {
+    const s = route.steps[i];
+    const mProj = closestSegment(s.maneuver.location, route.geometry);
+    if (mProj.segmentIndex < userProj.segmentIndex) continue;
+    const d = distanceMeters(user, s.maneuver.location);
+    if (d < bestDist) {
+      bestDist = d;
+      step = s;
+      stepIndex = i;
     }
   }
 
-  const remainingDuration =
-    route.distance > 0 ? (remaining / route.distance) * route.duration : 0;
+  if (!step) {
+    step = route.steps[route.steps.length - 1] ?? null;
+    bestDist = 0;
+  }
+
+  const remainingM = remainingDistanceAlongRoute(user, route.geometry);
+  const remainingS = route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
 
   return {
-    remainingDistance: remaining,
-    remainingDuration,
-    nextStepIndex,
-    distanceToRoute: best.dist * 111320
+    step,
+    stepIndex,
+    distanceToManeuver: bestDist,
+    remainingM,
+    remainingS
   };
+}
+
+function formatManeuverDistance(m: number): string {
+  if (m < 10) return `za ${Math.max(0, Math.round(m))} m`;
+  if (m < 100) return `za ${Math.round(m / 10) * 10} m`;
+  if (m < 1000) return `za ${Math.round(m / 50) * 50} m`;
+  return `za ${(m / 1000).toFixed(1)} km`;
 }
 
 export default function NavigationOverlay({
@@ -105,47 +101,74 @@ export default function NavigationOverlay({
   onRecenter,
   geoError,
   is3D,
-  onToggle3D
+  onToggle3D,
+  hasArrived,
+  destinationName,
+  traffic,
+  voiceEnabled,
+  onToggleVoice
 }: Props) {
-  const fallback: Coordinates = userLocation ?? {
-    lat: route.geometry[0]?.[1] ?? 0,
-    lng: route.geometry[0]?.[0] ?? 0
-  };
-  const [progress, setProgress] = useState<Progress>(() => computeProgress(route, fallback));
+  const nav = useMemo(() => computeNavState(route, userLocation), [route, userLocation]);
 
-  useEffect(() => {
-    if (!userLocation) return;
-    setProgress(computeProgress(route, userLocation));
-  }, [route, userLocation]);
+  useVoiceGuidance({
+    active: !hasArrived,
+    enabled: voiceEnabled,
+    stepIndex: nav.stepIndex,
+    instruction: nav.step?.instruction ?? '',
+    distanceToManeuver: nav.distanceToManeuver,
+    hasArrived
+  });
 
-  const nextStep =
-    route.steps[progress.nextStepIndex] ?? route.steps[route.steps.length - 1];
+  const remainingS = traffic
+    ? nav.remainingS * traffic.durationMultiplier
+    : nav.remainingS;
 
   return (
     <>
-      <div className="nav-banner" role="status" aria-live="polite">
-        <div className="nav-banner__icon" aria-hidden>
-          <NavIcon size={22} />
-        </div>
-        <div className="nav-banner__body">
-          <div className="nav-banner__instruction">
-            {nextStep?.instruction ?? 'Kontynuuj trasę'}
+      {hasArrived ? (
+        <div className="nav-arrived" role="status" aria-live="polite">
+          <div className="nav-arrived__icon" aria-hidden>
+            <CheckCircle2 size={34} />
           </div>
-          <div className="nav-banner__meta">
-            {nextStep ? `za ${formatDistance(nextStep.distance)}` : ''}
-            {!userLocation && ' · oczekiwanie na GPS…'}
-            {geoError && ` · ${geoError}`}
-          </div>
+          <div className="nav-arrived__title">Jesteś u celu</div>
+          {destinationName && <div className="nav-arrived__sub">{destinationName}</div>}
+          <button type="button" className="btn btn--primary" onClick={onExit}>
+            Zakończ nawigację
+          </button>
         </div>
-        <button
-          type="button"
-          className="btn btn--ghost btn--icon"
-          aria-label="Zakończ nawigację"
-          onClick={onExit}
-        >
-          <X size={18} />
-        </button>
-      </div>
+      ) : (
+        <div className="nav-banner" role="status" aria-live="polite">
+          <div className="nav-banner__icon" aria-hidden>
+            <NavIcon size={22} />
+          </div>
+          <div className="nav-banner__body">
+            <div className="nav-banner__instruction">
+              {nav.step?.instruction ?? 'Kontynuuj trasę'}
+            </div>
+            <div className="nav-banner__meta">
+              {nav.step ? formatManeuverDistance(nav.distanceToManeuver) : ''}
+              {!userLocation && ' · oczekiwanie na GPS…'}
+              {geoError && ` · ${geoError}`}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            aria-label={voiceEnabled ? 'Wycisz nawigację głosową' : 'Włącz nawigację głosową'}
+            onClick={onToggleVoice}
+          >
+            {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            aria-label="Zakończ nawigację"
+            onClick={onExit}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       <button
         type="button"
@@ -160,21 +183,30 @@ export default function NavigationOverlay({
       <div className="nav-progress">
         <div className="nav-progress__card">
           <div className="nav-stat">
-            <span className="nav-stat__value">
-              {formatDistance(progress.remainingDistance)}
-            </span>
+            <span className="nav-stat__value">{formatDistance(nav.remainingM)}</span>
             <span className="nav-stat__label">Pozostało</span>
           </div>
           <div className="nav-stat">
-            <span className="nav-stat__value">
-              {formatDuration(progress.remainingDuration)}
-            </span>
+            <span className="nav-stat__value">{formatDuration(remainingS)}</span>
             <span className="nav-stat__label">Czas</span>
           </div>
           <div className="nav-stat">
-            <span className="nav-stat__value">{formatETA(progress.remainingDuration)}</span>
+            <span className="nav-stat__value">{formatETA(remainingS)}</span>
             <span className="nav-stat__label">Przyjazd</span>
           </div>
+
+          {traffic && (
+            <div className="nav-stat nav-stat--traffic" title={`Średnie natężenie: ${(traffic.averageCongestion * 100).toFixed(0)}%`}>
+              <span
+                className="nav-traffic__dot"
+                style={{ background: congestionColor(traffic.averageCongestion) }}
+              />
+              <span className="nav-stat__label nav-stat__label--inline">
+                {traffic.hasRoadClosure ? 'Zamknięta droga' : congestionLabel(traffic.averageCongestion)}
+              </span>
+            </div>
+          )}
+
           <button
             type="button"
             className="btn btn--ghost btn--icon"

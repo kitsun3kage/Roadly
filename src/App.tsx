@@ -10,9 +10,12 @@ import NavigationOverlay from './components/navigation/NavigationOverlay';
 import TabBar from './components/layout/TabBar';
 import { useGeolocation } from './hooks/useGeolocation';
 import { useDeviceHeading } from './hooks/useDeviceHeading';
+import { useTraffic } from './hooks/useTraffic';
 import { calculateRoute } from './services/routing';
 import { storage } from './services/storage';
 import { uid } from './lib/utils';
+import { distanceMeters, distanceToPolyline } from './lib/geo';
+import { stopSpeaking } from './services/speech';
 import type {
   Collection,
   Place,
@@ -25,8 +28,13 @@ import type {
 type View = 'search' | 'route' | 'collections' | 'settings';
 type PickTarget = 'from' | 'to' | null;
 
+const ARRIVAL_THRESHOLD_M = 30;
+const OFF_ROUTE_THRESHOLD_M = 50;
+const OFF_ROUTE_DELAY_MS = 4000;
+const REROUTE_COOLDOWN_MS = 8000;
+const VOICE_PREF_KEY = 'roadly.voiceEnabled.v1';
+
 export default function App() {
-  // ─── Stan ──────────────────────────────────────────────────────────
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(() => storage.getTheme());
   const [styleId, setStyleId] = useState('liberty');
   const [view, setView] = useState<View>('search');
@@ -50,30 +58,46 @@ export default function App() {
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>(() => storage.getSavedPlaces());
 
   const [navigationActive, setNavigationActive] = useState(false);
+  const [hasArrived, setHasArrived] = useState(false);
   const [followUser, setFollowUser] = useState(false);
   const [is3D, setIs3D] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(VOICE_PREF_KEY);
+      return v === null ? true : v === '1';
+    } catch {
+      return true;
+    }
+  });
   const [toast, setToast] = useState<{ message: string; kind: 'info' | 'error' } | null>(null);
 
-  // ─── Refy i hooki ──────────────────────────────────────────────────
   const mapRef = useRef<MapViewHandle>(null);
   const geo = useGeolocation();
   const routingAbortRef = useRef<AbortController | null>(null);
   const recalcRef = useRef<{ from?: string; to?: string; profile?: TravelProfile }>({});
+  const offRouteSinceRef = useRef<number | null>(null);
+  const lastRerouteRef = useRef<number>(0);
+  const reroutingRef = useRef(false);
 
-  // ─── Pochodne (kolejność ma znaczenie!) ────────────────────────────
-  // activeRoute MUSI być przed inNavMode i przed każdym użyciem.
   const activeRoute = useMemo(
     () => routes.find((r) => r.id === activeRouteId) ?? routes[0] ?? null,
     [routes, activeRouteId]
   );
 
   const inNavMode = navigationActive && activeRoute !== null;
-
-  // Kompas urządzenia — fallback gdy GPS nie podaje heading (np. stoisz w miejscu).
   const deviceHeading = useDeviceHeading(inNavMode);
-
-  // Heading do obrotu kropki i kamery: GPS > kompas urządzenia
   const displayHeading = geo.heading ?? deviceHeading;
+
+  const { report: trafficReport } = useTraffic(activeRoute, inNavMode);
+
+  // Zapamiętaj preferencję TTS
+  useEffect(() => {
+    try {
+      localStorage.setItem(VOICE_PREF_KEY, voiceEnabled ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [voiceEnabled]);
 
   // ─── Motyw ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -95,24 +119,13 @@ export default function App() {
     }
   }, [theme]);
 
-  // ─── Persystencja ──────────────────────────────────────────────────
-  useEffect(() => {
-    storage.setRecentSearches(recentSearches);
-  }, [recentSearches]);
-
-  useEffect(() => {
-    storage.setCollections(collections);
-  }, [collections]);
-
-  useEffect(() => {
-    storage.setSavedPlaces(savedPlaces);
-  }, [savedPlaces]);
+  useEffect(() => { storage.setRecentSearches(recentSearches); }, [recentSearches]);
+  useEffect(() => { storage.setCollections(collections); }, [collections]);
+  useEffect(() => { storage.setSavedPlaces(savedPlaces); }, [savedPlaces]);
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = '';
-    };
+    return () => { document.body.style.overflow = ''; };
   }, []);
 
   const showToast = useCallback((message: string, kind: 'info' | 'error' = 'info') => {
@@ -220,6 +233,75 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromPlace?.id, toPlace?.id, profile]);
 
+  // ─── Reroute ───────────────────────────────────────────────────────
+  const handleReroute = useCallback(async () => {
+    if (!geo.position || !toPlace || !activeRoute) return;
+    if (reroutingRef.current) return;
+
+    reroutingRef.current = true;
+    showToast('Przeliczam trasę…');
+
+    try {
+      const result = await calculateRoute(
+        geo.position.coordinates,
+        toPlace.coordinates,
+        activeRoute.profile,
+        undefined,
+        false
+      );
+      if (result[0]) {
+        setRoutes(result);
+        setActiveRouteId(result[0].id);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('Reroute failed', e);
+    } finally {
+      reroutingRef.current = false;
+    }
+  }, [geo.position, toPlace, activeRoute, showToast]);
+
+  useEffect(() => {
+    if (!inNavMode) {
+      offRouteSinceRef.current = null;
+      return;
+    }
+    if (!activeRoute || !geo.position) return;
+    if (hasArrived) return;
+
+    const d = distanceToPolyline(geo.position.coordinates, activeRoute.geometry);
+
+    if (d > OFF_ROUTE_THRESHOLD_M) {
+      if (offRouteSinceRef.current === null) {
+        offRouteSinceRef.current = Date.now();
+      } else if (Date.now() - offRouteSinceRef.current > OFF_ROUTE_DELAY_MS) {
+        const now = Date.now();
+        if (now - lastRerouteRef.current < REROUTE_COOLDOWN_MS) return;
+        lastRerouteRef.current = now;
+        offRouteSinceRef.current = null;
+        void handleReroute();
+      }
+    } else {
+      offRouteSinceRef.current = null;
+    }
+  }, [inNavMode, activeRoute, geo.position, hasArrived, handleReroute]);
+
+  // ─── Dojazd ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!inNavMode) return;
+    if (!toPlace || !geo.position) return;
+    if (hasArrived) return;
+
+    const d = distanceMeters(geo.position.coordinates, toPlace.coordinates);
+    if (d < ARRIVAL_THRESHOLD_M) {
+      setHasArrived(true);
+      setFollowUser(false);
+      setIs3D(false);
+      mapRef.current?.set3D(false);
+      showToast('Dojechałeś do celu.');
+    }
+  }, [inNavMode, toPlace, geo.position, hasArrived, showToast]);
+
   // ─── Lokalizacja ───────────────────────────────────────────────────
   const handleUseMyLocationAsFrom = useCallback(async () => {
     const loc = geo.position ?? (await geo.ensurePosition());
@@ -276,14 +358,17 @@ export default function App() {
 
   const handleClearRoute = useCallback(() => {
     routingAbortRef.current?.abort();
+    stopSpeaking();
     setRoutes([]);
     setActiveRouteId(null);
     setFromPlace(null);
     setToPlace(null);
     setRoutingError(null);
     setNavigationActive(false);
+    setHasArrived(false);
     setFollowUser(false);
     setIs3D(false);
+    offRouteSinceRef.current = null;
   }, []);
 
   // ─── Nawigacja ─────────────────────────────────────────────────────
@@ -291,10 +376,13 @@ export default function App() {
     if (!activeRoute) return;
 
     setNavigationActive(true);
+    setHasArrived(false);
     setFollowUser(true);
     setIs3D(true);
     setSidebarOpen(false);
     setSelectedPlace(null);
+    offRouteSinceRef.current = null;
+    lastRerouteRef.current = 0;
 
     if (!geo.position) {
       void geo.ensurePosition();
@@ -302,9 +390,12 @@ export default function App() {
   }, [activeRoute, geo]);
 
   const handleExitNavigation = useCallback(() => {
+    stopSpeaking();
     setNavigationActive(false);
+    setHasArrived(false);
     setFollowUser(false);
     setIs3D(false);
+    offRouteSinceRef.current = null;
     if (activeRoute) {
       window.setTimeout(() => mapRef.current?.fitRoute(activeRoute), 700);
     }
@@ -317,6 +408,13 @@ export default function App() {
       const next = !prev;
       mapRef.current?.set3D(next);
       return next;
+    });
+  }, []);
+
+  const handleToggleVoice = useCallback(() => {
+    setVoiceEnabled((v) => {
+      if (v) stopSpeaking();
+      return !v;
     });
   }, []);
 
@@ -587,13 +685,7 @@ export default function App() {
           <button
             type="button"
             className={`map-control${geo.watching ? ' map-control--active' : ''}`}
-            aria-label={
-              geo.loading
-                ? 'Pobieranie lokalizacji…'
-                : geo.permission === 'denied'
-                ? 'Lokalizacja zablokowana — kliknij, aby uzyskać pomoc'
-                : 'Moja lokalizacja'
-            }
+            aria-label="Moja lokalizacja"
             onClick={handleGoToMyLocation}
             disabled={geo.loading}
           >
@@ -645,6 +737,11 @@ export default function App() {
           geoError={geo.error}
           is3D={is3D}
           onToggle3D={handleToggle3D}
+          hasArrived={hasArrived}
+          destinationName={toPlace?.name ?? null}
+          traffic={trafficReport}
+          voiceEnabled={voiceEnabled}
+          onToggleVoice={handleToggleVoice}
         />
       )}
 
