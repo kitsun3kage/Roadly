@@ -34,8 +34,10 @@ const OFF_ROUTE_DELAY_MS = 4000;
 const REROUTE_COOLDOWN_MS = 8000;
 const VOICE_PREF_KEY = 'roadly.voiceEnabled.v1';
 const STYLE_PREF_KEY = 'roadly.styleId.v1';
+const COMPASS_OFFSET_KEY = 'roadly.compassOffset.v1';
 
 export default function App() {
+  // ─── Stan ──────────────────────────────────────────────────────────
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(() => storage.getTheme());
   const [styleId, setStyleId] = useState<string>(() => {
     try {
@@ -67,6 +69,7 @@ export default function App() {
   const [navigationActive, setNavigationActive] = useState(false);
   const [hasArrived, setHasArrived] = useState(false);
   const [followUser, setFollowUser] = useState(false);
+
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem(VOICE_PREF_KEY);
@@ -75,8 +78,19 @@ export default function App() {
       return true;
     }
   });
+
+  const [compassOffset, setCompassOffset] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem(COMPASS_OFFSET_KEY);
+      return v ? Number(v) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
   const [toast, setToast] = useState<{ message: string; kind: 'info' | 'error' } | null>(null);
 
+  // ─── Refy i hooki ──────────────────────────────────────────────────
   const mapRef = useRef<MapViewHandle>(null);
   const geo = useGeolocation();
   const routingAbortRef = useRef<AbortController | null>(null);
@@ -85,13 +99,15 @@ export default function App() {
   const lastRerouteRef = useRef<number>(0);
   const reroutingRef = useRef(false);
 
+  // ─── Pochodne ──────────────────────────────────────────────────────
   const activeRoute = useMemo(
     () => routes.find((r) => r.id === activeRouteId) ?? routes[0] ?? null,
     [routes, activeRouteId]
   );
 
   const inNavMode = navigationActive && activeRoute !== null;
-  const deviceHeading = useDeviceHeading(inNavMode);
+
+  const deviceHeading = useDeviceHeading(inNavMode, compassOffset);
   const displayHeading = geo.heading ?? deviceHeading;
 
   const { report: trafficReport, incidents } = useTraffic(activeRoute, inNavMode);
@@ -99,15 +115,9 @@ export default function App() {
   // ─── Najbliższe zdarzenie przed nami ──────────────────────────────
   const upcomingIncident = useMemo(() => {
     if (!inNavMode || !geo.position || !activeRoute) return null;
-    const userAlong = distanceMeters(geo.position.coordinates, activeRoute.geometry[0] && {
-      lng: activeRoute.geometry[0][0],
-      lat: activeRoute.geometry[0][1]
-    } as any) || 0;
-    void userAlong;
     let best: { id: string; description: string; distance: number } | null = null;
     for (const inc of incidents) {
       const d = distanceMeters(geo.position.coordinates, inc.coordinates);
-      // Tylko zdarzenia przed nami (heurystyka: dystans w linii prostej)
       if (d > 5000) continue;
       if (!best || d < best.distance) {
         best = {
@@ -120,7 +130,7 @@ export default function App() {
     return best;
   }, [inNavMode, geo.position, activeRoute, incidents]);
 
-  // Zapamiętaj preferencje
+  // ─── Persystencja preferencji ──────────────────────────────────────
   useEffect(() => {
     try {
       localStorage.setItem(VOICE_PREF_KEY, voiceEnabled ? '1' : '0');
@@ -137,7 +147,15 @@ export default function App() {
     }
   }, [styleId]);
 
-  // Motyw
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPASS_OFFSET_KEY, String(compassOffset));
+    } catch {
+      /* ignore */
+    }
+  }, [compassOffset]);
+
+  // ─── Motyw ─────────────────────────────────────────────────────────
   useEffect(() => {
     storage.setTheme(theme);
     const apply = () => {
@@ -157,13 +175,24 @@ export default function App() {
     }
   }, [theme]);
 
-  useEffect(() => { storage.setRecentSearches(recentSearches); }, [recentSearches]);
-  useEffect(() => { storage.setCollections(collections); }, [collections]);
-  useEffect(() => { storage.setSavedPlaces(savedPlaces); }, [savedPlaces]);
+  // ─── Persystencja danych użytkownika ───────────────────────────────
+  useEffect(() => {
+    storage.setRecentSearches(recentSearches);
+  }, [recentSearches]);
+
+  useEffect(() => {
+    storage.setCollections(collections);
+  }, [collections]);
+
+  useEffect(() => {
+    storage.setSavedPlaces(savedPlaces);
+  }, [savedPlaces]);
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
+    return () => {
+      document.body.style.overflow = '';
+    };
   }, []);
 
   const showToast = useCallback((message: string, kind: 'info' | 'error' = 'info') => {
@@ -171,6 +200,7 @@ export default function App() {
     window.setTimeout(() => setToast(null), 5000);
   }, []);
 
+  // ─── Wybór miejsca ─────────────────────────────────────────────────
   const handleSelectPlace = useCallback(
     (place: Place, opts: { keepSidebar?: boolean } = {}) => {
       if (pickTarget === 'from') {
@@ -220,6 +250,7 @@ export default function App() {
     setSidebarOpen(true);
   }, []);
 
+  // ─── Routing ───────────────────────────────────────────────────────
   const handleCalculateRoute = useCallback(
     async (opts?: { silent?: boolean }) => {
       const from = fromPlace;
@@ -269,6 +300,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromPlace?.id, toPlace?.id, profile]);
 
+  // ─── Reroute ───────────────────────────────────────────────────────
   const handleReroute = useCallback(async () => {
     if (!geo.position || !toPlace || !activeRoute) return;
     if (reroutingRef.current) return;
@@ -321,6 +353,7 @@ export default function App() {
     }
   }, [inNavMode, activeRoute, geo.position, hasArrived, handleReroute]);
 
+  // ─── Dojazd ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!inNavMode) return;
     if (!toPlace || !geo.position) return;
@@ -329,11 +362,11 @@ export default function App() {
     if (d < ARRIVAL_THRESHOLD_M) {
       setHasArrived(true);
       setFollowUser(false);
-      mapRef.current?.set3D(false);
       showToast('Dojechałeś do celu.');
     }
   }, [inNavMode, toPlace, geo.position, hasArrived, showToast]);
 
+  // ─── Lokalizacja ───────────────────────────────────────────────────
   const handleUseMyLocationAsFrom = useCallback(async () => {
     const loc = geo.position ?? (await geo.ensurePosition());
     if (!loc) {
@@ -401,6 +434,7 @@ export default function App() {
     offRouteSinceRef.current = null;
   }, []);
 
+  // ─── Nawigacja ─────────────────────────────────────────────────────
   const handleStartNavigation = useCallback(() => {
     if (!activeRoute) return;
     setNavigationActive(true);
@@ -438,6 +472,35 @@ export default function App() {
     if (geo.position) mapRef.current?.flyTo(geo.position.coordinates, 17);
   }, [geo.position]);
 
+  // ─── Kalibracja kompasu ────────────────────────────────────────────
+  const handleCompassCalibrate = useCallback(() => {
+    if (deviceHeading == null || Number.isNaN(deviceHeading)) {
+      showToast(
+        'Nie mogę odczytać kierunku — obróć telefon o 8-kę i spróbuj ponownie.',
+        'error'
+      );
+      return;
+    }
+    // Chcemy, żeby aktualny kierunek patrzenia był traktowany jako północ.
+    // deviceHeading = (raw + offset) % 360.
+    // Chcemy: raw + newOffset = 0  →  newOffset = -raw = offset - deviceHeading.
+    let next = compassOffset - deviceHeading;
+    // Normalizacja do [-180, 180]
+    next = ((((next + 180) % 360) + 360) % 360) - 180;
+    setCompassOffset(Math.round(next));
+    showToast(`Skalibrowano kompas (offset ${next.toFixed(0)}°).`);
+  }, [deviceHeading, compassOffset, showToast]);
+
+  const handleCompassReset = useCallback(() => {
+    setCompassOffset(0);
+    showToast('Reset kalibracji kompasu.');
+  }, [showToast]);
+
+  const handleCompassOffsetChange = useCallback((v: number) => {
+    setCompassOffset(v);
+  }, []);
+
+  // ─── Zapisane miejsca ──────────────────────────────────────────────
   const ensureDefaultCollection = useCallback((): string => {
     if (collections.length > 0) return collections[0].id;
     const c: Collection = {
@@ -458,7 +521,12 @@ export default function App() {
         showToast('Miejsce jest już zapisane.');
         return;
       }
-      const sp: SavedPlace = { ...place, savedId: uid(), collectionId: cid, savedAt: Date.now() };
+      const sp: SavedPlace = {
+        ...place,
+        savedId: uid(),
+        collectionId: cid,
+        savedAt: Date.now()
+      };
       setSavedPlaces((prev) => [sp, ...prev]);
       showToast('Zapisano miejsce.');
     },
@@ -470,7 +538,12 @@ export default function App() {
   }, []);
 
   const handleCreateCollection = useCallback((name: string) => {
-    const c: Collection = { id: uid(), name, createdAt: Date.now(), updatedAt: Date.now() };
+    const c: Collection = {
+      id: uid(),
+      name,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
     setCollections((prev) => [...prev, c]);
     return c.id;
   }, []);
@@ -489,6 +562,7 @@ export default function App() {
   const handleClearRecent = useCallback(() => setRecentSearches([]), []);
   const handleClosePlaceDetails = useCallback(() => setSelectedPlace(null), []);
 
+  // ─── WIDOK ─────────────────────────────────────────────────────────
   return (
     <div className={`app${inNavMode ? ' app--navigating' : ''}`}>
       <MapView
@@ -641,6 +715,10 @@ export default function App() {
                     setRecentSearches([]);
                     showToast('Wyczyszczono dane.');
                   }}
+                  compassOffset={compassOffset}
+                  onCompassCalibrate={handleCompassCalibrate}
+                  onCompassReset={handleCompassReset}
+                  onCompassOffsetChange={handleCompassOffsetChange}
                 />
               )}
             </div>
@@ -670,10 +748,20 @@ export default function App() {
 
       {!inNavMode && (
         <div className="map-controls" role="group" aria-label="Sterowanie mapą">
-          <button type="button" className="map-control" aria-label="Przybliż" onClick={() => mapRef.current?.getMap()?.zoomIn()}>
+          <button
+            type="button"
+            className="map-control"
+            aria-label="Przybliż"
+            onClick={() => mapRef.current?.getMap()?.zoomIn()}
+          >
             <Plus size={18} />
           </button>
-          <button type="button" className="map-control" aria-label="Oddal" onClick={() => mapRef.current?.getMap()?.zoomOut()}>
+          <button
+            type="button"
+            className="map-control"
+            aria-label="Oddal"
+            onClick={() => mapRef.current?.getMap()?.zoomOut()}
+          >
             <Minus size={18} />
           </button>
           <button
@@ -699,7 +787,12 @@ export default function App() {
               <Locate size={18} color={geo.permission === 'denied' ? 'var(--danger)' : undefined} />
             )}
           </button>
-          <button type="button" className="map-control" aria-label="Przywróć kierunek północny" onClick={() => mapRef.current?.resetNorth()}>
+          <button
+            type="button"
+            className="map-control"
+            aria-label="Przywróć kierunek północny"
+            onClick={() => mapRef.current?.resetNorth()}
+          >
             <Compass size={18} />
           </button>
         </div>

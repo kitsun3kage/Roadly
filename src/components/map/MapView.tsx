@@ -56,8 +56,6 @@ const PROGRESS_SOURCE = 'roadly-route-progress';
 
 const NAV_ZOOM = 17;
 const NAV_PITCH = 60;
-const CAMERA_DURATION_MS = 900;
-const BEARING_DEAD_ZONE_DEG = 2;
 
 const FALLBACK_ROUTE_COLOR = '#ff6b00';
 const ROUTE_OUTLINE_COLOR = '#ffffff';
@@ -65,6 +63,11 @@ const ROUTE_PROGRESS_COLOR = '#8e8e93';
 
 const ARROW_FILL = '#ff6b00';
 const ARROW_STROKE = '#ffffff';
+
+// Wygładzanie — im mniejsze, tym wolniej kamera dogania.
+const BEARING_LERP = 0.14;
+const CENTER_LERP = 0.16;
+const MIN_BEARING_DELTA = 0.05; // poniżej tego progu snapujemy (stopni)
 
 const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -79,6 +82,11 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   const popupRef = useRef<maplibregl.Popup | null>(null);
 
   const firstStyleRenderRef = useRef(true);
+
+  // ─── Refs dla pętli rAF (płynna kamera) ──────────────────────────
+  const targetBearingRef = useRef<number>(0);
+  const targetCenterRef = useRef<[number, number] | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   // ─── Inicjalizacja mapy ───────────────────────────────────────────
   useEffect(() => {
@@ -143,7 +151,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Warstwy trasy (gradient + outline + progress) ────────────────
+  // ─── Warstwy trasy ────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -181,12 +189,11 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     props.traffic
   ]);
 
-  // ─── Markery incydentów (DOM — niezależne od stylu mapy) ──────────
+  // ─── Markery incydentów (DOM) ─────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Sprzątanie poprzednich markerów
     incidentMarkersRef.current.forEach((m) => m.remove());
     incidentMarkersRef.current = [];
 
@@ -198,29 +205,23 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     for (const inc of incidents) {
       if (!isFinite(inc.coordinates.lng) || !isFinite(inc.coordinates.lat)) continue;
 
-      // Snap: incydent ląduje dokładnie na trasie (nie obok)
       const coord: Coordinates =
         route && route.geometry.length >= 2
           ? closestPointOnPolyline(inc.coordinates, route.geometry)
           : inc.coordinates;
 
-      // Element DOM markera
       const el = document.createElement('div');
       el.className = 'roadly-incident-marker';
       el.style.background = incidentColor(inc.category);
       el.setAttribute('role', 'button');
       el.setAttribute('tabindex', '0');
-      el.setAttribute(
-        'aria-label',
-        `${incidentLabel(inc.category)}: ${inc.description}`
-      );
+      el.setAttribute('aria-label', `${incidentLabel(inc.category)}: ${inc.description}`);
       el.title = `${incidentLabel(inc.category)} — ${inc.description}`;
 
       const span = document.createElement('span');
       span.textContent = incidentIcon(inc.category);
       el.appendChild(span);
 
-      // Popup po kliknięciu
       const openPopup = () => {
         popupRef.current?.remove();
         const cat = inc.category;
@@ -270,19 +271,12 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
         }
       });
 
-      const marker = new maplibregl.Marker({
-        element: el,
-        anchor: 'center'
-      })
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([coord.lng, coord.lat])
         .addTo(map);
 
       incidentMarkersRef.current.push(marker);
     }
-
-    return () => {
-      // nie usuwamy tutaj — kolejny render effect sprząta na początku
-    };
   }, [props.incidents, props.route]);
 
   // ─── Zmiana stylu (pomijamy pierwszy render) ─────────────────────
@@ -303,19 +297,107 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.styleId]);
 
-  // ─── Tryb nawigacji ───────────────────────────────────────────────
+  // ─── PŁYNNA KAMERA W NAWIGACJI (pętla rAF) ───────────────────────
+  // Wszystko dzieje się w jednej pętli ~60 fps, więc obrót jest idealnie
+  // płynny — niezależny od tego jak często przychodzą aktualizacje GPS
+  // i kompasu. Kamera "dogania" cel stopniowo, bez skoków.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (props.navigationMode) {
-      map.stop();
-      map.jumpTo({ pitch: NAV_PITCH, zoom: NAV_ZOOM });
-    } else {
-      map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
-    }
-  }, [props.navigationMode]);
 
-  // ─── Markery: start / cel / wybrane / zapisane ────────────────────
+    if (!props.navigationMode || !props.followUser) {
+      // Zatrzymaj pętlę poza nawigacją
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      return;
+    }
+
+    // Natychmiastowy skok do widoku nawigacji (pitch + zoom)
+    map.stop();
+    map.jumpTo({ pitch: NAV_PITCH, zoom: NAV_ZOOM });
+
+    const tick = () => {
+      const m = mapRef.current;
+      if (!m) return;
+
+      const update: maplibregl.JumpToOptions = {};
+      let changed = false;
+
+      // ─── Bearing: lerp w kierunku targetBearingRef ───
+      const target = targetBearingRef.current;
+      const currentBearing = m.getBearing();
+      const d = bearingDelta(currentBearing, target);
+      if (Math.abs(d) > MIN_BEARING_DELTA) {
+        update.bearing = currentBearing + d * BEARING_LERP;
+        changed = true;
+      } else if (Math.abs(d) > 0.001) {
+        update.bearing = target;
+        changed = true;
+      }
+
+      // ─── Center: lerp w kierunku targetCenterRef ───
+      const tc = targetCenterRef.current;
+      if (tc) {
+        const cc = m.getCenter();
+        const dLng = tc[0] - cc.lng;
+        const dLat = tc[1] - cc.lat;
+        if (Math.abs(dLng) > 1e-8 || Math.abs(dLat) > 1e-8) {
+          update.center = [cc.lng + dLng * CENTER_LERP, cc.lat + dLat * CENTER_LERP];
+          changed = true;
+        }
+      }
+
+      // ─── Pitch / zoom: dążą do stałych wartości nawigacji ───
+      const currentPitch = m.getPitch();
+      if (Math.abs(currentPitch - NAV_PITCH) > 0.3) {
+        update.pitch = currentPitch + (NAV_PITCH - currentPitch) * 0.18;
+        changed = true;
+      }
+      const currentZoom = m.getZoom();
+      if (Math.abs(currentZoom - NAV_ZOOM) > 0.03) {
+        update.zoom = currentZoom + (NAV_ZOOM - currentZoom) * 0.18;
+        changed = true;
+      }
+
+      if (changed) {
+        try {
+          m.jumpTo(update);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [props.navigationMode, props.followUser]);
+
+  // ─── Aktualizacja celów kamery (bez wywoływania animacji) ────────
+  useEffect(() => {
+    if (!props.navigationMode) return;
+    if (props.userHeading != null && !Number.isNaN(props.userHeading)) {
+      targetBearingRef.current = props.userHeading;
+    }
+  }, [props.userHeading, props.navigationMode]);
+
+  useEffect(() => {
+    if (!props.navigationMode) return;
+    if (props.userLocation) {
+      targetCenterRef.current = [props.userLocation.lng, props.userLocation.lat];
+    }
+  }, [props.userLocation, props.navigationMode]);
+
+  // ─── Markery: start / cel / wybrane / zapisane ───────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -438,36 +520,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userHeading]);
 
-  // ─── Kamera w nawigacji ───────────────────────────────────────────
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (!props.navigationMode) return;
-    if (!props.followUser) return;
-    if (!props.userLocation) return;
-
-    const center: [number, number] = [props.userLocation.lng, props.userLocation.lat];
-    const currentBearing = map.getBearing();
-
-    let targetBearing = currentBearing;
-    if (props.userHeading != null && !Number.isNaN(props.userHeading)) {
-      const delta = bearingDelta(currentBearing, props.userHeading);
-      if (Math.abs(delta) > BEARING_DEAD_ZONE_DEG) {
-        targetBearing = currentBearing + delta;
-      }
-    }
-
-    map.easeTo({
-      center,
-      bearing: targetBearing,
-      pitch: NAV_PITCH,
-      zoom: NAV_ZOOM,
-      duration: CAMERA_DURATION_MS,
-      easing: (t) => t,
-      essential: true
-    });
-  }, [props.userLocation, props.userHeading, props.followUser, props.navigationMode]);
-
+  // ─── Follow user poza nawigacją ───────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -605,10 +658,7 @@ function ensureLayers(map: MLMap) {
       type: 'line',
       source: ROUTE_SOURCE,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: {
-        'line-color': FALLBACK_ROUTE_COLOR,
-        'line-width': 7
-      }
+      paint: { 'line-color': FALLBACK_ROUTE_COLOR, 'line-width': 7 }
     });
   }
 

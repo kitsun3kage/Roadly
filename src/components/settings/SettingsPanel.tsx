@@ -1,4 +1,4 @@
-import { Download, Info, Palette, Trash2, Upload } from 'lucide-react';
+import { Compass, Download, Info, Palette, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { MAP_STYLES } from '../../services/maps';
 import { isSupabaseEnabled } from '../../lib/supabase';
@@ -11,6 +11,10 @@ interface Props {
   onExport: () => void;
   onImport: (file: File) => void;
   onClearAll: () => void;
+  compassOffset: number;
+  onCompassCalibrate: () => void;
+  onCompassReset: () => void;
+  onCompassOffsetChange: (offset: number) => void;
 }
 
 export default function SettingsPanel(props: Props) {
@@ -23,6 +27,7 @@ export default function SettingsPanel(props: Props) {
         <h2 className="panel__title">Ustawienia</h2>
       </div>
 
+      {/* Motyw */}
       <div className="panel__section">
         <div className="panel__section-title">Motyw</div>
         <div className="route-alt">
@@ -38,6 +43,7 @@ export default function SettingsPanel(props: Props) {
         </div>
       </div>
 
+      {/* Styl mapy */}
       <div className="panel__section">
         <div className="panel__section-title">Styl mapy</div>
         <div className="route-alt">
@@ -53,6 +59,52 @@ export default function SettingsPanel(props: Props) {
         </div>
       </div>
 
+      {/* Kalibracja kompasu */}
+      <div className="panel__section">
+        <div className="panel__section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Compass size={14} /> Kalibracja kompasu
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+          Trzymaj telefon skierowany <strong>na północ</strong> i kliknij „Skalibruj". Strzałka
+          zacznie wskazywać właściwy kierunek.
+        </p>
+        <div className="btn-row" style={{ marginBottom: 8 }}>
+          <button className="btn btn--primary" onClick={props.onCompassCalibrate}>
+            <Compass size={14} /> Skalibruj
+          </button>
+          <button className="btn" onClick={props.onCompassReset}>
+            <RotateCcw size={14} /> Reset
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-tertiary)', minWidth: 46 }}>
+            Offset
+          </span>
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={1}
+            value={props.compassOffset}
+            onChange={(e) => props.onCompassOffsetChange(Number(e.target.value))}
+            style={{ flex: 1 }}
+            aria-label="Ręczny offset kompasu"
+          />
+          <span
+            style={{
+              fontSize: 12,
+              fontVariantNumeric: 'tabular-nums',
+              minWidth: 42,
+              textAlign: 'right'
+            }}
+          >
+            {props.compassOffset.toFixed(0)}°
+          </span>
+        </div>
+      </div>
+
+      {/* Dane lokalne */}
       <div className="panel__section">
         <div className="panel__section-title">Dane lokalne</div>
         <div className="btn-row">
@@ -81,6 +133,7 @@ export default function SettingsPanel(props: Props) {
         </div>
       </div>
 
+      {/* O aplikacji */}
       <div className="panel__section">
         <div className="panel__section-title">O aplikacji</div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
