@@ -1,8 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import maplibregl, { LngLatBounds, type Map as MLMap } from 'maplibre-gl';
 import type { Coordinates, Place, Route } from '../../types';
-import { DEFAULT_CENTER, DEFAULT_ZOOM, FALLBACK_STYLE, MAP_STYLES } from '../../services/maps';
-import { bearingDelta } from '../../lib/geo';
+import {
+  DEFAULT_CENTER,
+  DEFAULT_ZOOM,
+  FALLBACK_STYLE,
+  MAP_STYLES
+} from '../../services/maps';
+import { bearingDelta, closestSegment } from '../../lib/geo';
 
 export interface MapViewHandle {
   flyTo: (coord: Coordinates, zoom?: number) => void;
@@ -31,11 +36,19 @@ interface Props {
 
 const ROUTE_SOURCE = 'roadly-route';
 const ALT_SOURCE = 'roadly-alt-route';
+const PROGRESS_SOURCE = 'roadly-route-progress';
 
 const NAV_ZOOM = 17;
 const NAV_PITCH = 60;
-const CAMERA_DURATION_MS = 900; // dopasowane do 1 Hz update GPS
-const BEARING_DEAD_ZONE_DEG = 2; // ignoruj mikro-zmiany heading
+const CAMERA_DURATION_MS = 900;
+const BEARING_DEAD_ZONE_DEG = 2;
+
+/**
+ * Kolory motywu Roadly — czerwono-pomarańczowo-żółty.
+ * Używane dla markera użytkownika, żeby pasował do logo i akcentu UI.
+ */
+const ARROW_FILL = '#ff6b00';
+const ARROW_STROKE = '#ffffff';
 
 const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -50,11 +63,12 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
   // ─── Inicjalizacja mapy ───────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const styleUrl = MAP_STYLES.find((s) => s.id === props.styleId)?.url ?? MAP_STYLES[0].url;
+    const option = MAP_STYLES.find((s) => s.id === props.styleId) ?? MAP_STYLES[0];
+    const mapStyle = option.url ?? option.style ?? FALLBACK_STYLE;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: styleUrl,
+      style: mapStyle as never,
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       attributionControl: { compact: true },
@@ -63,9 +77,12 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       touchPitch: true
     });
 
-    map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left');
+    map.addControl(
+      new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }),
+      'bottom-left'
+    );
 
-    // Wyciszenie brakujących ikon w sprite
+    // Wyciszenie ostrzeżeń o brakujących ikonach
     map.on('styleimagemissing', (e) => {
       if (!map.hasImage(e.id)) {
         map.addImage(e.id, {
@@ -80,7 +97,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       const msg = e?.error?.message ?? '';
       if (/Failed to fetch|style/i.test(msg)) {
         try {
-          map.setStyle(FALLBACK_STYLE as any);
+          map.setStyle(FALLBACK_STYLE as never);
         } catch {
           /* ignore */
         }
@@ -106,20 +123,21 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Styl ─────────────────────────────────────────────────────────
+  // ─── Zmiana stylu ─────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const url = MAP_STYLES.find((s) => s.id === props.styleId)?.url;
-    if (!url) return;
+    const option = MAP_STYLES.find((s) => s.id === props.styleId);
+    if (!option) return;
+    const mapStyle = option.url ?? option.style ?? FALLBACK_STYLE;
     try {
-      map.setStyle(url);
+      map.setStyle(mapStyle as never);
     } catch {
       /* ignore */
     }
   }, [props.styleId]);
 
-  // ─── Wejście/wyjście z trybu nawigacji (natychmiast) ──────────────
+  // ─── Wejście/wyjście z trybu nawigacji ────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -191,7 +209,6 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     el.setAttribute('role', 'img');
     el.setAttribute('aria-label', 'Twoja lokalizacja');
 
-    // Strzałka SVG z białą obwódką (nie zlewa się z drogą)
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 40 40');
@@ -199,10 +216,9 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     svg.setAttribute('height', '40');
     svg.setAttribute('class', 'roadly-location__svg');
     const path = document.createElementNS(SVG_NS, 'path');
-    // Klasyczny kształt strzałki nawigacyjnej (chevron)
     path.setAttribute('d', 'M20 4 L34 34 L20 27 L6 34 Z');
-    path.setAttribute('fill', '#0a84ff');
-    path.setAttribute('stroke', '#ffffff');
+    path.setAttribute('fill', ARROW_FILL);
+    path.setAttribute('stroke', ARROW_STROKE);
     path.setAttribute('stroke-width', '2.5');
     path.setAttribute('stroke-linejoin', 'round');
     path.setAttribute('stroke-linecap', 'round');
@@ -247,10 +263,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     }
   }, [props.userHeading]);
 
-  // ─── Kamera w trybie nawigacji (JEDEN easeTo, linear easing) ─────
-  // Zamiast osobnych setCenter / easeTo(bearing) — łączymy wszystko w jedną
-  // animację, żeby nie anulowały się nawzajem. Linear easing + czas ~= okres
-  // GPS (1 Hz) daje płynny ruch bez "przeskoków" między aktualizacjami.
+  // ─── Kamera w trybie nawigacji ────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -265,7 +278,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
     if (props.userHeading != null && !Number.isNaN(props.userHeading)) {
       const delta = bearingDelta(currentBearing, props.userHeading);
       if (Math.abs(delta) > BEARING_DEAD_ZONE_DEG) {
-        targetBearing = currentBearing + delta; // zawsze krótszą drogą
+        targetBearing = currentBearing + delta;
       }
     }
 
@@ -275,17 +288,12 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       pitch: NAV_PITCH,
       zoom: NAV_ZOOM,
       duration: CAMERA_DURATION_MS,
-      easing: (t) => t, // linear → brak przestojów między update'ami
+      easing: (t) => t,
       essential: true
     });
-  }, [
-    props.userLocation,
-    props.userHeading,
-    props.followUser,
-    props.navigationMode
-  ]);
+  }, [props.userLocation, props.userHeading, props.followUser, props.navigationMode]);
 
-  // ─── Follow user poza nawigacją (miękka animacja) ────────────────
+  // ─── Follow user poza nawigacją ───────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -297,6 +305,43 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
       duration: 600
     });
   }, [props.userLocation, props.followUser, props.navigationMode]);
+
+  // ─── Szara linia pokonanego odcinka trasy ─────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!map.isStyleLoaded()) return;
+
+    const src = map.getSource(PROGRESS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    if (
+      !props.navigationMode ||
+      !props.route ||
+      !props.userLocation ||
+      props.route.geometry.length < 2
+    ) {
+      src.setData(emptyFC());
+      return;
+    }
+
+    const line = computeProgressLine(props.route, props.userLocation);
+    if (line.length < 2) {
+      src.setData(emptyFC());
+      return;
+    }
+
+    src.setData({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: line }
+        }
+      ]
+    });
+  }, [props.navigationMode, props.route, props.userLocation]);
 
   // ─── Markery zapisanych miejsc ────────────────────────────────────
   useEffect(() => {
@@ -385,9 +430,31 @@ function emptyFC(): GeoJSON.FeatureCollection {
   return { type: 'FeatureCollection', features: [] };
 }
 
+/**
+ * Fragment geometrii od startu do aktualnej pozycji (rzut na najbliższy segment).
+ */
+function computeProgressLine(
+  route: Route,
+  user: Coordinates
+): [number, number][] {
+  if (route.geometry.length < 2) return [];
+  const proj = closestSegment(user, route.geometry);
+  const out: [number, number][] = [];
+  for (let i = 0; i <= proj.segmentIndex; i++) {
+    out.push(route.geometry[i]);
+  }
+  if (proj.t > 0.001 && proj.segmentIndex < route.geometry.length - 1) {
+    const [x1, y1] = route.geometry[proj.segmentIndex];
+    const [x2, y2] = route.geometry[proj.segmentIndex + 1];
+    out.push([x1 + (x2 - x1) * proj.t, y1 + (y2 - y1) * proj.t]);
+  }
+  return out;
+}
+
 function ensureLayers(map: MLMap) {
   if (!map.isStyleLoaded()) return;
 
+  // Alternatywne trasy (pod spodem, szare)
   if (!map.getSource(ALT_SOURCE)) {
     map.addSource(ALT_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -401,6 +468,7 @@ function ensureLayers(map: MLMap) {
     });
   }
 
+  // Główna trasa (pomarańczowa z białą obwódką, dopasowana do motywu)
   if (!map.getSource(ROUTE_SOURCE)) {
     map.addSource(ROUTE_SOURCE, { type: 'geojson', data: emptyFC() });
   }
@@ -419,7 +487,21 @@ function ensureLayers(map: MLMap) {
       type: 'line',
       source: ROUTE_SOURCE,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': '#0a84ff', 'line-width': 6 }
+      paint: { 'line-color': '#ff6b00', 'line-width': 6 }
+    });
+  }
+
+  // Szara linia pokonanego odcinka
+  if (!map.getSource(PROGRESS_SOURCE)) {
+    map.addSource(PROGRESS_SOURCE, { type: 'geojson', data: emptyFC() });
+  }
+  if (!map.getLayer('roadly-route-progress-line')) {
+    map.addLayer({
+      id: 'roadly-route-progress-line',
+      type: 'line',
+      source: PROGRESS_SOURCE,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#8e8e93', 'line-width': 6, 'line-opacity': 0.95 }
     });
   }
 }
@@ -445,7 +527,9 @@ function updateRouteLayers(map: MLMap, primary: Route | null, alternatives: Rout
     primarySrc.setData(emptyFC());
   }
 
-  const alts = alternatives.filter((r) => r.id !== primary?.id && r.geometry.length > 1);
+  const alts = alternatives.filter(
+    (r) => r.id !== primary?.id && r.geometry.length > 1
+  );
   altSrc.setData({
     type: 'FeatureCollection',
     features: alts.map((r) => ({

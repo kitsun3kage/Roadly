@@ -33,10 +33,17 @@ const OFF_ROUTE_THRESHOLD_M = 50;
 const OFF_ROUTE_DELAY_MS = 4000;
 const REROUTE_COOLDOWN_MS = 8000;
 const VOICE_PREF_KEY = 'roadly.voiceEnabled.v1';
+const STYLE_PREF_KEY = 'roadly.styleId.v1';
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(() => storage.getTheme());
-  const [styleId, setStyleId] = useState('liberty');
+  const [styleId, setStyleId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(STYLE_PREF_KEY) || 'osm';
+    } catch {
+      return 'osm';
+    }
+  });
   const [view, setView] = useState<View>('search');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [pickTarget, setPickTarget] = useState<PickTarget>(null);
@@ -60,7 +67,6 @@ export default function App() {
   const [navigationActive, setNavigationActive] = useState(false);
   const [hasArrived, setHasArrived] = useState(false);
   const [followUser, setFollowUser] = useState(false);
-  const [is3D, setIs3D] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem(VOICE_PREF_KEY);
@@ -90,7 +96,7 @@ export default function App() {
 
   const { report: trafficReport } = useTraffic(activeRoute, inNavMode);
 
-  // Zapamiętaj preferencję TTS
+  // Zapamiętaj preferencje
   useEffect(() => {
     try {
       localStorage.setItem(VOICE_PREF_KEY, voiceEnabled ? '1' : '0');
@@ -99,7 +105,15 @@ export default function App() {
     }
   }, [voiceEnabled]);
 
-  // ─── Motyw ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      localStorage.setItem(STYLE_PREF_KEY, styleId);
+    } catch {
+      /* ignore */
+    }
+  }, [styleId]);
+
+  // Motyw
   useEffect(() => {
     storage.setTheme(theme);
     const apply = () => {
@@ -119,13 +133,21 @@ export default function App() {
     }
   }, [theme]);
 
-  useEffect(() => { storage.setRecentSearches(recentSearches); }, [recentSearches]);
-  useEffect(() => { storage.setCollections(collections); }, [collections]);
-  useEffect(() => { storage.setSavedPlaces(savedPlaces); }, [savedPlaces]);
+  useEffect(() => {
+    storage.setRecentSearches(recentSearches);
+  }, [recentSearches]);
+  useEffect(() => {
+    storage.setCollections(collections);
+  }, [collections]);
+  useEffect(() => {
+    storage.setSavedPlaces(savedPlaces);
+  }, [savedPlaces]);
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
+    return () => {
+      document.body.style.overflow = '';
+    };
   }, []);
 
   const showToast = useCallback((message: string, kind: 'info' | 'error' = 'info') => {
@@ -296,7 +318,6 @@ export default function App() {
     if (d < ARRIVAL_THRESHOLD_M) {
       setHasArrived(true);
       setFollowUser(false);
-      setIs3D(false);
       mapRef.current?.set3D(false);
       showToast('Dojechałeś do celu.');
     }
@@ -367,7 +388,6 @@ export default function App() {
     setNavigationActive(false);
     setHasArrived(false);
     setFollowUser(false);
-    setIs3D(false);
     offRouteSinceRef.current = null;
   }, []);
 
@@ -378,7 +398,6 @@ export default function App() {
     setNavigationActive(true);
     setHasArrived(false);
     setFollowUser(true);
-    setIs3D(true);
     setSidebarOpen(false);
     setSelectedPlace(null);
     offRouteSinceRef.current = null;
@@ -394,7 +413,6 @@ export default function App() {
     setNavigationActive(false);
     setHasArrived(false);
     setFollowUser(false);
-    setIs3D(false);
     offRouteSinceRef.current = null;
     if (activeRoute) {
       window.setTimeout(() => mapRef.current?.fitRoute(activeRoute), 700);
@@ -402,14 +420,6 @@ export default function App() {
     setSidebarOpen(true);
     setView('route');
   }, [activeRoute]);
-
-  const handleToggle3D = useCallback(() => {
-    setIs3D((prev) => {
-      const next = !prev;
-      mapRef.current?.set3D(next);
-      return next;
-    });
-  }, []);
 
   const handleToggleVoice = useCallback(() => {
     setVoiceEnabled((v) => {
@@ -735,8 +745,6 @@ export default function App() {
           onExit={handleExitNavigation}
           onRecenter={handleRecenterNavigation}
           geoError={geo.error}
-          is3D={is3D}
-          onToggle3D={handleToggle3D}
           hasArrived={hasArrived}
           destinationName={toPlace?.name ?? null}
           traffic={trafficReport}

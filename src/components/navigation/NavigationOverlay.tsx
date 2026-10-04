@@ -1,12 +1,5 @@
-import { useMemo, useState } from 'react';
-import {
-  CheckCircle2,
-  Locate,
-  Navigation as NavIcon,
-  Volume2,
-  VolumeX,
-  X
-} from 'lucide-react';
+import { useMemo } from 'react';
+import { CheckCircle2, Locate, Navigation as NavIcon, Volume2, VolumeX, X } from 'lucide-react';
 import type { Coordinates, Route, RouteStep } from '../../types';
 import { formatDistance, formatDuration, formatETA } from '../../lib/utils';
 import {
@@ -23,8 +16,6 @@ interface Props {
   onExit: () => void;
   onRecenter: () => void;
   geoError: string | null;
-  is3D: boolean;
-  onToggle3D: () => void;
   hasArrived: boolean;
   destinationName: string | null;
   traffic: TrafficReport | null;
@@ -76,7 +67,8 @@ function computeNavState(route: Route, user: Coordinates | null): NavState {
   }
 
   const remainingM = remainingDistanceAlongRoute(user, route.geometry);
-  const remainingS = route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
+  const remainingS =
+    route.distance > 0 ? (remainingM / route.distance) * route.duration : 0;
 
   return {
     step,
@@ -100,8 +92,6 @@ export default function NavigationOverlay({
   onExit,
   onRecenter,
   geoError,
-  is3D,
-  onToggle3D,
   hasArrived,
   destinationName,
   traffic,
@@ -170,16 +160,6 @@ export default function NavigationOverlay({
         </div>
       )}
 
-      <button
-        type="button"
-        className="nav-3d-toggle"
-        onClick={onToggle3D}
-        aria-label={is3D ? 'Przełącz na widok 2D' : 'Przełącz na widok 3D'}
-        title={is3D ? 'Widok 2D' : 'Widok 3D'}
-      >
-        {is3D ? '2D' : '3D'}
-      </button>
-
       <div className="nav-progress">
         <div className="nav-progress__card">
           <div className="nav-stat">
@@ -196,13 +176,18 @@ export default function NavigationOverlay({
           </div>
 
           {traffic && (
-            <div className="nav-stat nav-stat--traffic" title={`Średnie natężenie: ${(traffic.averageCongestion * 100).toFixed(0)}%`}>
+            <div
+              className="nav-stat nav-stat--traffic"
+              title={`Średnie natężenie: ${(traffic.averageCongestion * 100).toFixed(0)}%`}
+            >
               <span
                 className="nav-traffic__dot"
                 style={{ background: congestionColor(traffic.averageCongestion) }}
               />
               <span className="nav-stat__label nav-stat__label--inline">
-                {traffic.hasRoadClosure ? 'Zamknięta droga' : congestionLabel(traffic.averageCongestion)}
+                {traffic.hasRoadClosure
+                  ? 'Zamknięta droga'
+                  : congestionLabel(traffic.averageCongestion)}
               </span>
             </div>
           )}

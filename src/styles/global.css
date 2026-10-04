@@ -74,7 +74,7 @@ h4 {
   letter-spacing: -0.01em;
 }
 
-/* Layout */
+/* ─── Layout ─────────────────────────────────────────────────────── */
 .app {
   position: fixed;
   inset: 0;
@@ -116,7 +116,7 @@ h4 {
   min-height: 0;
 }
 
-/* Top bar */
+/* ─── Top bar ────────────────────────────────────────────────────── */
 .topbar {
   display: flex;
   align-items: center;
@@ -139,14 +139,15 @@ h4 {
   width: 26px;
   height: 26px;
   border-radius: 7px;
-  background: linear-gradient(135deg, #0a84ff, #34c759);
+  background: linear-gradient(135deg, #ff3b30 0%, #ff9500 50%, #ffcc00 100%);
   display: grid;
   place-items: center;
   color: #fff;
   flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(255, 59, 48, 0.35);
 }
 
-/* Search */
+/* ─── Search ─────────────────────────────────────────────────────── */
 .search {
   position: relative;
   padding: 0 var(--space-3) var(--space-2);
@@ -167,7 +168,7 @@ h4 {
 
 .search__field:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.18);
 }
 
 .search__input {
@@ -212,7 +213,7 @@ h4 {
   }
 }
 
-/* Results */
+/* ─── Results ────────────────────────────────────────────────────── */
 .results {
   padding: 0 var(--space-3) var(--space-3);
   overflow-y: auto;
@@ -279,7 +280,7 @@ h4 {
   overflow: hidden;
 }
 
-/* Panels */
+/* ─── Panels ─────────────────────────────────────────────────────── */
 .panel {
   padding: var(--space-4);
   display: flex;
@@ -319,7 +320,7 @@ h4 {
   margin-bottom: var(--space-2);
 }
 
-/* Buttons */
+/* ─── Buttons ────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -349,6 +350,7 @@ h4 {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-contrast);
+  box-shadow: 0 2px 8px rgba(255, 107, 0, 0.28);
 }
 
 .btn--primary:hover {
@@ -391,7 +393,7 @@ h4 {
   flex-wrap: wrap;
 }
 
-/* Fields */
+/* ─── Fields ─────────────────────────────────────────────────────── */
 .field {
   display: flex;
   align-items: center;
@@ -426,7 +428,7 @@ h4 {
   min-width: 0;
 }
 
-/* Route */
+/* ─── Route ──────────────────────────────────────────────────────── */
 .route-summary {
   display: flex;
   align-items: center;
@@ -459,17 +461,18 @@ h4 {
 
 .route-alt {
   display: flex;
-  gap: var(--space-2);
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .route-alt__chip {
-  padding: 7px 12px;
+  padding: 5px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
@@ -487,7 +490,7 @@ h4 {
   background: var(--accent-strong);
 }
 
-/* Steps */
+/* ─── Steps ──────────────────────────────────────────────────────── */
 .steps {
   display: flex;
   flex-direction: column;
@@ -531,7 +534,7 @@ h4 {
   margin-top: 2px;
 }
 
-/* Map controls */
+/* ─── Map controls ───────────────────────────────────────────────── */
 .map-controls {
   position: absolute;
   right: var(--space-3);
@@ -572,7 +575,7 @@ h4 {
   cursor: not-allowed;
 }
 
-/* Tab bar */
+/* ─── Tab bar ────────────────────────────────────────────────────── */
 .tabbar {
   position: absolute;
   left: 50%;
@@ -612,7 +615,7 @@ h4 {
   color: var(--accent);
 }
 
-/* States */
+/* ─── States ─────────────────────────────────────────────────────── */
 .state {
   display: flex;
   flex-direction: column;
@@ -637,7 +640,7 @@ h4 {
   max-width: 320px;
 }
 
-/* Toast */
+/* ─── Toast ──────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
   left: 50%;
@@ -659,7 +662,7 @@ h4 {
   color: var(--danger);
 }
 
-/* Rows */
+/* ─── Rows ───────────────────────────────────────────────────────── */
 .row {
   display: flex;
   align-items: center;
@@ -699,7 +702,7 @@ h4 {
   text-overflow: ellipsis;
 }
 
-/* Place details */
+/* ─── Place details ──────────────────────────────────────────────── */
 .place-hero {
   display: flex;
   flex-direction: column;
@@ -731,7 +734,7 @@ h4 {
   font-weight: 600;
 }
 
-/* Navigation overlay */
+/* ─── Navigation overlay ─────────────────────────────────────────── */
 .nav-banner {
   position: absolute;
   top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
@@ -756,14 +759,16 @@ h4 {
   width: 44px;
   height: 44px;
   border-radius: var(--radius-md);
-  background: var(--accent);
+  background: linear-gradient(135deg, #ff3b30, #ff9500);
   color: #fff;
   display: grid;
   place-items: center;
   flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(255, 107, 0, 0.35);
 }
 
 .nav-banner__body {
+  flex: 1;
   min-width: 0;
 }
 
@@ -828,7 +833,99 @@ h4 {
   font-weight: 600;
 }
 
-/* Marker styles */
+.nav-stat--traffic {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-left: 1px solid var(--border);
+  height: 36px;
+}
+
+.nav-traffic__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+}
+
+.nav-stat__label--inline {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* ─── Ekran "Jesteś u celu" ──────────────────────────────────────── */
+.nav-arrived {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 40;
+  background: var(--bg-panel);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 32px));
+  text-align: center;
+  animation: nav-arrived-in 380ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+@keyframes nav-arrived-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.nav-arrived__icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #34c759, #30b050);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 6px 20px rgba(52, 199, 89, 0.35);
+}
+
+.nav-arrived__title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.nav-arrived__sub {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: -6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-arrived .btn {
+  margin-top: 4px;
+  min-width: 180px;
+}
+
+/* ─── Markery ────────────────────────────────────────────────────── */
 .roadly-marker {
   width: 22px;
   height: 22px;
@@ -848,22 +945,29 @@ h4 {
 }
 
 .roadly-location {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #0a84ff;
-  border: 3px solid #fff;
-  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.35), 0 2px 8px rgba(0, 0, 0, 0.35);
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.roadly-location__svg {
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.35));
+  will-change: transform;
 }
 
 .roadly-location-accuracy {
   border-radius: 50%;
-  background: rgba(10, 132, 255, 0.15);
-  border: 1px solid rgba(10, 132, 255, 0.4);
+  background: rgba(255, 107, 0, 0.15);
+  border: 1px solid rgba(255, 107, 0, 0.4);
   transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
-/* MapLibre attribution */
+/* ─── MapLibre attribution ───────────────────────────────────────── */
 .maplibregl-ctrl-attrib {
   background: var(--map-attribution-bg) !important;
   font-size: 11px !important;
@@ -880,7 +984,7 @@ h4 {
   font-size: 11px !important;
 }
 
-/* Responsive */
+/* ─── Responsywność ──────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .app__sidebar {
     width: 340px;
@@ -950,227 +1054,4 @@ h4 {
   .tabbar__btn {
     padding: 10px 12px;
   }
-}
-
-/* ─────────────────────────────────────────────────────────────── */
-/* TRYB NAWIGACJI — immersyjny widok jak w Google Maps            */
-/* ─────────────────────────────────────────────────────────────── */
-
-.app--navigating .app__sidebar,
-.app--navigating .tabbar {
-  display: none !important;
-}
-
-/* Przycisk 2D / 3D — pływający przy prawej krawędzi, nad kartą postępu */
-.nav-3d-toggle {
-  position: absolute;
-  right: var(--space-4);
-  bottom: calc(180px + env(safe-area-inset-bottom, 0px));
-  z-index: 32;
-  min-width: 48px;
-  height: 44px;
-  padding: 0 14px;
-  border-radius: 22px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  display: grid;
-  place-items: center;
-  color: var(--text);
-  transition: transform var(--transition-fast), background var(--transition-fast);
-}
-
-.nav-3d-toggle:hover {
-  background: var(--bg-hover);
-}
-
-.nav-3d-toggle:active {
-  transform: scale(0.94);
-}
-
-/* Na mobile — nieco wyżej, żeby nie nachodził na kartę postępu */
-@media (max-width: 480px) {
-  .nav-3d-toggle {
-    right: var(--space-3);
-    bottom: calc(220px + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-/* ─── Marker użytkownika: strzałka z obrotem wg heading ─── */
-
-.roadly-location {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(10, 132, 255, 0.18);
-  border: 2px solid #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  display: grid;
-  place-items: center;
-  position: relative;
-}
-
-.roadly-location__arrow {
-  width: 22px;
-  height: 22px;
-  background-color: #0a84ff;
-  /* Kształt strzałki wskazującej w górę (północ) */
-  clip-path: polygon(50% 0%, 88% 100%, 50% 78%, 12% 100%);
-  transition: transform 240ms ease-out;
-  will-change: transform;
-}
-
-.roadly-location-accuracy {
-  border-radius: 50%;
-  background: rgba(10, 132, 255, 0.15);
-  border: 1px solid rgba(10, 132, 255, 0.4);
-  transform: translate(-50%, -50%);
-}
-
-/* ─── Tryb nawigacji z obrotem kamery ─── */
-.app--navigating .roadly-location {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-}
-
-/* ─── Marker użytkownika: strzałka SVG ─────────────────────────── */
-.roadly-location {
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-}
-
-.roadly-location__svg {
-  width: 40px;
-  height: 40px;
-  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.35));
-  will-change: transform;
-}
-
-.roadly-location-accuracy {
-  border-radius: 50%;
-  background: rgba(10, 132, 255, 0.15);
-  border: 1px solid rgba(10, 132, 255, 0.4);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-/* ─── Mniejsze chipsy wariantów trasy i profilu ─────────────────── */
-.route-alt__chip {
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.route-alt {
-  gap: 6px;
-}
-
-/* ─── Ekran "Jesteś u celu" ──────────────────────────────────────── */
-.nav-arrived {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 40;
-  background: var(--bg-panel);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
-  padding: 28px 28px 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  min-width: 260px;
-  max-width: min(360px, calc(100vw - 32px));
-  text-align: center;
-  animation: nav-arrived-in 380ms cubic-bezier(0.2, 0.9, 0.25, 1);
-}
-
-@keyframes nav-arrived-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -46%) scale(0.94);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
-}
-
-.nav-arrived__icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: #34c759;
-  color: #ffffff;
-  display: grid;
-  place-items: center;
-  box-shadow: 0 6px 20px rgba(52, 199, 89, 0.35);
-}
-
-.nav-arrived__title {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.nav-arrived__sub {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-top: -6px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nav-arrived .btn {
-  margin-top: 4px;
-  min-width: 180px;
-}
-
-/* ─── Plakietka natężenia ruchu w karcie postępu ─────────────────── */
-.nav-stat--traffic {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  border-left: 1px solid var(--border);
-  height: 36px;
-}
-
-.nav-traffic__dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
-}
-
-.nav-stat__label--inline {
-  font-size: 12px;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-/* Baner nawigacji — dodatkowy przycisk obok X */
-.nav-banner__body {
-  flex: 1;
 }

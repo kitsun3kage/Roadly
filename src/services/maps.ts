@@ -1,13 +1,46 @@
 export interface MapStyleOption {
   id: string;
   name: string;
-  url: string;
+  url?: string;
+  style?: Record<string, unknown>;
 }
+
+/**
+ * Klasyczny styl OpenStreetMap — żółte drogi drugorzędne,
+ * czerwone/pomarańczowe główne, piaskowe tło.
+ */
+const OSM_RASTER_STYLE: Record<string, unknown> = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: [
+        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+      ],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors'
+    }
+  },
+  layers: [
+    {
+      id: 'osm',
+      type: 'raster',
+      source: 'osm'
+    }
+  ]
+};
 
 export const MAP_STYLES: MapStyleOption[] = [
   {
+    id: 'osm',
+    name: 'Klasyczny',
+    style: OSM_RASTER_STYLE
+  },
+  {
     id: 'liberty',
-    name: 'Domyślny',
+    name: 'Liberty',
     url: 'https://tiles.openfreemap.org/styles/liberty'
   },
   {
@@ -22,32 +55,7 @@ export const MAP_STYLES: MapStyleOption[] = [
   }
 ];
 
-/**
- * Ostateczny fallback gdy główny styl mapy nie może zostać pobrany.
- * Używa rastrowych kafelków OpenStreetMap.
- */
-export const FALLBACK_STYLE = {
-  version: 8 as const,
-  sources: {
-    osm: {
-      type: 'raster' as const,
-      tiles: [
-        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
-      ],
-      tileSize: 256,
-      attribution: '© OpenStreetMap contributors'
-    }
-  },
-  layers: [
-    {
-      id: 'osm',
-      type: 'raster' as const,
-      source: 'osm'
-    }
-  ]
-};
+export const FALLBACK_STYLE = OSM_RASTER_STYLE;
 
-export const DEFAULT_CENTER: [number, number] = [19.456, 51.759]; // Łódź
+export const DEFAULT_CENTER: [number, number] = [19.456, 51.759];
 export const DEFAULT_ZOOM = 6;
