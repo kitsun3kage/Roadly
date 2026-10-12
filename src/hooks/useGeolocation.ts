@@ -8,21 +8,10 @@ import {
   type GeolocationPermission,
   type LocationResult
 } from '../services/location';
-import type { Coordinates } from '../types';
+import { distanceMeters } from '../lib/geo';
 
-const MIN_MOVE_M = 2;
-const MIN_INTERVAL_MS = 900;
-
-function distanceM(a: Coordinates, b: Coordinates): number {
-  const R = 6371000;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s));
-}
+const MIN_MOVE_M = 1;
+const MIN_INTERVAL_MS = 400;
 
 export interface GeolocationHook {
   position: LocationResult | null;
@@ -57,7 +46,6 @@ export function useGeolocation(): GeolocationHook {
     permissionRef.current = permission;
   }, [permission]);
 
-  // ─── Uprawnienia ─────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
@@ -91,43 +79,39 @@ export function useGeolocation(): GeolocationHook {
     };
   }, []);
 
-  // ─── Przetwarzanie pozycji: throttling + stabilizacja ───────────
   const handlePosition = useCallback((loc: LocationResult) => {
     const prev = positionRef.current;
     const now = performance.now();
 
-    // 1) Stabilizacja po dystansie — ignoruj mikro-drgania GPS
     if (prev) {
-      const moved = distanceM(prev.coordinates, loc.coordinates);
-      const dHeading = loc.heading != null && prev.heading != null
-        ? Math.abs(loc.heading - prev.heading)
-        : 999;
-      // Jeśli prawie stoimy i heading się nie zmienił, pomijamy
+      const moved = distanceMeters(prev.coordinates, loc.coordinates);
+      const dHeading =
+        loc.heading != null && prev.heading != null
+          ? Math.abs(loc.heading - prev.heading)
+          : 999;
       if (moved < MIN_MOVE_M && dHeading < 5 && Math.abs(loc.accuracy - prev.accuracy) < 5) {
         return;
       }
     }
 
-    // 2) Throttling czasowy — nie częściej niż ~1 Hz
-    if (now - lastEmitTsRef.current < MIN_INTERVAL_MS) {
-      return;
-    }
+    if (now - lastEmitTsRef.current < MIN_INTERVAL_MS) return;
     lastEmitTsRef.current = now;
 
-    // 3) Zapis w ref (dla konsumentów którzy nie chcą re-renderów)
     positionRef.current = loc;
-
-    // 4) setState tylko gdy naprawdę trzeba
     setPosition(loc);
     setError(null);
 
-    // Heading z GPS — preferuj z Geolocation API
     if (loc.heading != null && loc.speed != null && loc.speed > 0.5) {
-      setHeading(loc.heading);
+      const h = loc.heading;
+      setHeading((prevHeading) => {
+        if (prevHeading == null) return h;
+        const diff = Math.abs(h - prevHeading);
+        if (diff < 3 || diff > 357) return prevHeading;
+        return h;
+      });
     }
   }, []);
 
-  // ─── AUTO-WATCH ────────────────────────────────────────────────────
   useEffect(() => {
     if (permission !== 'granted') return;
     if (stopRef.current) return;

@@ -20,6 +20,7 @@ import {
   closestPointOnPolyline,
   closestSegment,
   distanceAlongRouteTo,
+  distanceMeters,
   polylineLength
 } from '../../lib/geo';
 import {
@@ -45,9 +46,7 @@ interface Props {
   selectedPlace?: Place | null;
   route?: Route | null;
   alternativeRoutes?: Route[];
-  /** REF — brak re-renderów przy każdej aktualizacji GPS. */
   userLocationRef?: MutableRefObject<LocationResult | null>;
-  /** REF — heading z kompasu (bez re-renderów). */
   headingRef?: MutableRefObject<number | null>;
   fromMarker?: Coordinates | null;
   toMarker?: Coordinates | null;
@@ -71,12 +70,15 @@ const ROUTE_PROGRESS_COLOR = '#8e8e93';
 const ARROW_FILL = '#ff6b00';
 const ARROW_STROKE = '#ffffff';
 
+// Płynność
 const BEARING_LERP = 0.22;
-const CENTER_LERP = 0.22;
+const CENTER_LERP = 0.28;
 const MIN_BEARING_DELTA = 0.1;
-
-// Marker + kamera potrzebują tylko ~30 fps. 60 fps marnuje CPU na mobile.
 const TARGET_FRAME_MS = 1000 / 30;
+
+// Dead reckoning
+const MIN_SPEED_FOR_PREDICTION = 0.5;
+const MAX_PREDICT_SECONDS = 2;
 
 const MapView = memo(
   forwardRef<MapViewHandle, Props>(function MapView(props, ref) {
@@ -96,10 +98,29 @@ const MapView = memo(
     const navModeRef = useRef<boolean>(!!props.navigationMode);
     const followUserRef = useRef<boolean>(!!props.followUser);
     const targetBearingRef = useRef<number>(0);
-    const targetCenterRef = useRef<[number, number] | null>(null);
+
+    // Dead reckoning state
+    const lastSeenGpsTsRef = useRef<number>(0);
+    const lastGpsRef = useRef<{
+      coord: Coordinates;
+      receivedAt: number;
+      speed: number;
+      heading: number;
+    } | null>(null);
+    // Wygładzona pozycja markera (i kamery) — jedna prawda
+    const smoothedPosRef = useRef<[number, number] | null>(null);
 
     useEffect(() => { navModeRef.current = !!props.navigationMode; }, [props.navigationMode]);
     useEffect(() => { followUserRef.current = !!props.followUser; }, [props.followUser]);
+
+    // Reset dead reckoning przy wejściu/wyjściu z nawigacji
+    useEffect(() => {
+      if (!props.navigationMode) {
+        lastGpsRef.current = null;
+        smoothedPosRef.current = null;
+        lastSeenGpsTsRef.current = 0;
+      }
+    }, [props.navigationMode]);
 
     // ─── Inicjalizacja mapy ───────────────────────────────────────
     useEffect(() => {
@@ -185,17 +206,7 @@ const MapView = memo(
       };
     }, [props.route, props.alternativeRoutes, props.styleId, props.traffic]);
 
-    // ─── Progress (pokonany odcinek) — aktualizowany w rAF ──────
-    useEffect(() => {
-      const map = mapRef.current;
-      if (!map) return;
-      if (!props.navigationMode || !props.route) {
-        const src = map.getSource(PROGRESS_SOURCE) as maplibregl.GeoJSONSource | undefined;
-        src?.setData(emptyFC());
-      }
-    }, [props.navigationMode, props.route]);
-
-    // ─── Markery incydentów (DOM) ─────────────────────────────────
+    // ─── Markery incydentów ───────────────────────────────────────
     useEffect(() => {
       const map = mapRef.current;
       if (!map) return;
@@ -288,7 +299,7 @@ const MapView = memo(
       }
     }, [props.styleId]);
 
-    // ─── Tryb nawigacji (skok) ────────────────────────────────────
+    // ─── Tryb nawigacji (skok do 3D) ──────────────────────────────
     useEffect(() => {
       const map = mapRef.current;
       if (!map) return;
@@ -400,16 +411,15 @@ const MapView = memo(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ─── Pętla rAF: marker + progress + kamera ────────────────────
+    // ─── Pętla rAF: dead reckoning + kamera ───────────────────────
     useEffect(() => {
       let raf = 0;
       let lastFrame = 0;
 
       const tick = (ts: number) => {
         raf = requestAnimationFrame(tick);
-
-        // Throttle do ~30 fps
         if (ts - lastFrame < TARGET_FRAME_MS) return;
+        const frameDt = (ts - lastFrame) / 1000;
         lastFrame = ts;
 
         const map = mapRef.current;
@@ -418,10 +428,83 @@ const MapView = memo(
         const loc = props.userLocationRef?.current ?? null;
         const h = props.headingRef?.current ?? null;
 
-        // ── Marker użytkownika: pozycja + obrót ──
-        if (userMarkerRef.current && loc) {
+        // ── 1. Wykryj nowy fix GPS ─────────────────────────────────
+        if (loc && loc.timestamp !== lastSeenGpsTsRef.current) {
+          const now = performance.now();
+          const prevFix = lastGpsRef.current;
+
+          // Speed z GPS lub policzona z dwóch fixów (iOS czasem daje null)
+          let speed = loc.speed ?? 0;
+          if (speed < 0.5 && prevFix) {
+            const dist = distanceMeters(prevFix.coord, loc.coordinates);
+            const dt = (now - prevFix.receivedAt) / 1000;
+            if (dt > 0.3 && dt < 10 && dist > 0.5) {
+              speed = dist / dt;
+            }
+          }
+
+          lastGpsRef.current = {
+            coord: loc.coordinates,
+            receivedAt: now,
+            speed,
+            heading: h ?? prevFix?.heading ?? 0
+          };
+          lastSeenGpsTsRef.current = loc.timestamp;
+
+          // Jeśli to pierwszy fix po wejściu w nawigację — start z tej pozycji
+          if (!smoothedPosRef.current) {
+            smoothedPosRef.current = [loc.coordinates.lng, loc.coordinates.lat];
+          }
+        }
+
+        // ── 2. Dead reckoning — gdzie JESTEŚMY teraz ──────────────
+        const gps = lastGpsRef.current;
+        let predicted: [number, number] | null = null;
+
+        if (gps) {
+          const elapsed = Math.min(
+            (performance.now() - gps.receivedAt) / 1000,
+            MAX_PREDICT_SECONDS
+          );
+          const headingForPredict =
+            h != null && !Number.isNaN(h) ? h : gps.heading ?? 0;
+
+          if (gps.speed > MIN_SPEED_FOR_PREDICTION && elapsed > 0.05) {
+            const dist = gps.speed * elapsed;
+            const hdgRad = (headingForPredict * Math.PI) / 180;
+            const dLat = (dist * Math.cos(hdgRad)) / 111320;
+            const dLng =
+              (dist * Math.sin(hdgRad)) /
+              (111320 * Math.cos((gps.coord.lat * Math.PI) / 180));
+            predicted = [gps.coord.lng + dLng, gps.coord.lat + dLat];
+          } else {
+            predicted = [gps.coord.lng, gps.coord.lat];
+          }
+        } else if (loc) {
+          predicted = [loc.coordinates.lng, loc.coordinates.lat];
+        }
+
+        // ── 3. Wygładź pozycję (jedna prawda dla markera i kamery) ─
+        if (predicted) {
+          const smooth = smoothedPosRef.current;
+          if (!smooth) {
+            smoothedPosRef.current = [predicted[0], predicted[1]];
+          } else {
+            // Stała prędkość doganiania — im większy frameDt, tym większy krok
+            const k = Math.min(1, CENTER_LERP * (frameDt * 30));
+            smoothedPosRef.current = [
+              smooth[0] + (predicted[0] - smooth[0]) * k,
+              smooth[1] + (predicted[1] - smooth[1]) * k
+            ];
+          }
+        }
+
+        const smoothed = smoothedPosRef.current;
+
+        // ── 4. Marker: pozycja + obrót ─────────────────────────────
+        if (userMarkerRef.current && smoothed) {
           try {
-            userMarkerRef.current.setLngLat([loc.coordinates.lng, loc.coordinates.lat]);
+            userMarkerRef.current.setLngLat(smoothed);
             if (h != null && !Number.isNaN(h)) {
               userMarkerRef.current.setRotation(h);
             }
@@ -430,11 +513,19 @@ const MapView = memo(
           }
         }
 
-        // ── Progress line (pokonany odcinek) ──
-        if (navModeRef.current && loc && props.route && props.route.geometry.length >= 2) {
+        // ── 5. Progress line (pokonany odcinek) ───────────────────
+        if (
+          navModeRef.current &&
+          smoothed &&
+          props.route &&
+          props.route.geometry.length >= 2
+        ) {
           const src = map.getSource(PROGRESS_SOURCE) as maplibregl.GeoJSONSource | undefined;
           if (src) {
-            const line = computeProgressLine(props.route, loc.coordinates);
+            const line = computeProgressLine(props.route, {
+              lng: smoothed[0],
+              lat: smoothed[1]
+            });
             if (line.length >= 2) {
               src.setData({
                 type: 'FeatureCollection',
@@ -450,36 +541,35 @@ const MapView = memo(
           }
         }
 
-        // ── Kamera w nawigacji ──
-        if (navModeRef.current && followUserRef.current && loc) {
+        // ── 6. Kamera w nawigacji ──────────────────────────────────
+        if (navModeRef.current && followUserRef.current && smoothed) {
           const update: maplibregl.JumpToOptions = {};
           let changed = false;
 
           if (h != null && !Number.isNaN(h)) {
             targetBearingRef.current = h;
           }
-          targetCenterRef.current = [loc.coordinates.lng, loc.coordinates.lat];
 
-          const target = targetBearingRef.current;
-          const currentBearing = map.getBearing();
-          const d = bearingDelta(currentBearing, target);
-          if (Math.abs(d) > MIN_BEARING_DELTA) {
-            update.bearing = currentBearing + d * BEARING_LERP;
+          const targetB = targetBearingRef.current;
+          const currentB = map.getBearing();
+          const dB = bearingDelta(currentB, targetB);
+          if (Math.abs(dB) > MIN_BEARING_DELTA) {
+            update.bearing = currentB + dB * BEARING_LERP;
             changed = true;
-          } else if (Math.abs(d) > 0.001) {
-            update.bearing = target;
+          } else if (Math.abs(dB) > 0.001) {
+            update.bearing = targetB;
             changed = true;
           }
 
-          const tc = targetCenterRef.current;
-          if (tc) {
-            const cc = map.getCenter();
-            const dLng = tc[0] - cc.lng;
-            const dLat = tc[1] - cc.lat;
-            if (Math.abs(dLng) > 1e-8 || Math.abs(dLat) > 1e-8) {
-              update.center = [cc.lng + dLng * CENTER_LERP, cc.lat + dLat * CENTER_LERP];
-              changed = true;
-            }
+          const cc = map.getCenter();
+          const dLng = smoothed[0] - cc.lng;
+          const dLat = smoothed[1] - cc.lat;
+          if (Math.abs(dLng) > 1e-9 || Math.abs(dLat) > 1e-9) {
+            update.center = [
+              cc.lng + dLng * CENTER_LERP,
+              cc.lat + dLat * CENTER_LERP
+            ];
+            changed = true;
           }
 
           const currentPitch = map.getPitch();
@@ -572,8 +662,6 @@ const MapView = memo(
     return <div ref={containerRef} className="app__map" aria-label="Interaktywna mapa" />;
   }),
   (prev, next) => {
-    // Custom comparator — porównuje tylko istotne propsy.
-    // userLocationRef i headingRef są refami — nie trzeba ich porównywać.
     return (
       prev.styleId === next.styleId &&
       prev.selectedPlace === next.selectedPlace &&
@@ -745,8 +833,9 @@ function applyRouteGradient(
   points.sort((a, b) => a.progress - b.progress);
 
   if (points[0].progress > 0.001) points.unshift({ progress: 0, color: points[0].color });
-  if (points[points.length - 1].progress < 0.999)
+  if (points[points.length - 1].progress < 0.999) {
     points.push({ progress: 1, color: points[points.length - 1].color });
+  }
 
   const maxStops = 20;
   let stops = points;
